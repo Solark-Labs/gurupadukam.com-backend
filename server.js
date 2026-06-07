@@ -15,6 +15,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import nodemailer from 'nodemailer';
+import cron from 'node-cron';
 
 // --- E-Commerce Imports ---
 import './database.js'; // Connection & Seeding
@@ -42,11 +43,130 @@ const otpStore = {}; // Key: email/phone, Value: { code, expiresAt }
 const loginAttempts = {}; // Key: email, Value: { count, lockUntil }
 const resetTokenStore = {}; // Key: token, Value: { email, expiresAt }
 
+function generateICS(bookingId, poojaType, dateStr, timeSlot, meetLink, summary, description) {
+  const pad = (num) => String(num).padStart(2, '0');
+  
+  let startHour = 9;
+  let startMin = 0;
+  let endHour = 11;
+  let endMin = 0;
+
+  try {
+    const times = timeSlot.split('-');
+    const startTimeStr = times[0].trim();
+    const isPM = startTimeStr.toUpperCase().includes('PM');
+    const parts = startTimeStr.replace(/(AM|PM)/i, '').trim().split(':');
+    let hour = parseInt(parts[0]);
+    let min = parseInt(parts[1] || '0');
+    if (isPM && hour < 12) hour += 12;
+    if (!isPM && hour === 12) hour = 0;
+    startHour = hour;
+    startMin = min;
+
+    if (times[1]) {
+      const endTimeStr = times[1].trim();
+      const isEndPM = endTimeStr.toUpperCase().includes('PM');
+      const endParts = endTimeStr.replace(/(AM|PM)/i, '').trim().split(':');
+      let ehour = parseInt(endParts[0]);
+      let emin = parseInt(endParts[1] || '0');
+      if (isEndPM && ehour < 12) ehour += 12;
+      if (!isEndPM && ehour === 12) ehour = 0;
+      endHour = ehour;
+      endMin = emin;
+    } else {
+      endHour = startHour + 2;
+      endMin = startMin;
+    }
+  } catch (e) {}
+
+  const d = new Date(dateStr);
+  const year = d.getFullYear() || 2026;
+  const month = pad((d.getMonth() + 1) || 6);
+  const day = pad(d.getDate() || 15);
+
+  const startDT = `${year}${month}${day}T${pad(startHour)}${pad(startMin)}00`;
+  const endDT = `${year}${month}${day}T${pad(endHour)}${pad(endMin)}00`;
+
+  const icsLines = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Gurupadukam//Ritual Calendar//EN',
+    'CALSCALE:GREGORIAN',
+    'METHOD:REQUEST',
+    'BEGIN:VEVENT',
+    `UID:booking-${bookingId}@gurupadukam.com`,
+    `DTSTAMP:${year}${month}${day}T000000Z`,
+    `DTSTART;TZID=Asia/Kolkata:${startDT}`,
+    `DTEND;TZID=Asia/Kolkata:${endDT}`,
+    `SUMMARY:${summary}`,
+    `DESCRIPTION:${description.replace(/\n/g, '\\n')}`,
+    `LOCATION:${meetLink || 'Physical Venue'}`,
+    'STATUS:CONFIRMED',
+    'SEQUENCE:0',
+    'BEGIN:VALARM',
+    'TRIGGER:-PT30M',
+    'ACTION:DISPLAY',
+    `DESCRIPTION:Reminder for ${summary}`,
+    'END:VALARM',
+    'END:VEVENT',
+    'END:VCALENDAR'
+  ];
+
+  return icsLines.join('\r\n');
+}
+
+function generateGoogleCalendarUrl(bookingId, poojaType, dateStr, timeSlot, meetLink, summary, description) {
+  const pad = (num) => String(num).padStart(2, '0');
+  let startHour = 9;
+  let endHour = 11;
+
+  try {
+    const times = timeSlot.split('-');
+    const startTimeStr = times[0].trim();
+    const isPM = startTimeStr.toUpperCase().includes('PM');
+    const parts = startTimeStr.replace(/(AM|PM)/i, '').trim().split(':');
+    let hour = parseInt(parts[0]);
+    if (isPM && hour < 12) hour += 12;
+    if (!isPM && hour === 12) hour = 0;
+    startHour = hour;
+
+    if (times[1]) {
+      const endTimeStr = times[1].trim();
+      const isEndPM = endTimeStr.toUpperCase().includes('PM');
+      const endParts = endTimeStr.replace(/(AM|PM)/i, '').trim().split(':');
+      let ehour = parseInt(endParts[0]);
+      if (isEndPM && ehour < 12) ehour += 12;
+      if (!isEndPM && ehour === 12) ehour = 0;
+      endHour = ehour;
+    } else {
+      endHour = startHour + 2;
+    }
+  } catch (e) {}
+
+  const d = new Date(dateStr);
+  const year = d.getFullYear() || 2026;
+  const month = pad((d.getMonth() + 1) || 6);
+  const day = pad(d.getDate() || 15);
+
+  const dStart = `${year}${month}${day}T${pad(startHour)}0000`;
+  const dEnd = `${year}${month}${day}T${pad(endHour)}0000`;
+
+  const baseUrl = 'https://calendar.google.com/calendar/render?action=TEMPLATE';
+  const url = `${baseUrl}&text=${encodeURIComponent(summary)}&dates=${dStart}/${dEnd}&details=${encodeURIComponent(description)}&location=${encodeURIComponent(meetLink || 'Physical Venue')}`;
+  return url;
+}
+
 // High-Fidelity sendEmailNotification supporting BOTH Hostinger SMTP and SendGrid Web API
-async function sendEmailNotification(to, subject, htmlContent) {
+async function sendEmailNotification(to, subject, htmlContent, attachments = []) {
   // 0. Check if Hostinger HTTPS Email Relay is active (Bypasses Render SMTP port blocks for free!)
   const emailRelayUrl = process.env.EMAIL_RELAY_URL || (process.env.PROXY_HEADER ? `https://gurupadukam.com/email-relay.php` : null);
   const proxyHeader = process.env.PROXY_HEADER || 'EPNwICjxdCRxm9E3KepJfD17JBHYY001fg';
+
+  const relayAttachments = attachments.map(att => ({
+    content: Buffer.isBuffer(att.content) ? att.content.toString('base64') : Buffer.from(att.content).toString('base64'),
+    filename: att.filename,
+    type: att.contentType || att.type || 'text/plain'
+  }));
 
   if (emailRelayUrl) {
     try {
@@ -60,7 +180,8 @@ async function sendEmailNotification(to, subject, htmlContent) {
           to: to,
           subject: subject,
           html: htmlContent,
-          token: proxyHeader
+          token: proxyHeader,
+          attachments: relayAttachments
         })
       });
       if (response.ok) {
@@ -107,7 +228,8 @@ async function sendEmailNotification(to, subject, htmlContent) {
         from: `"${smtpSenderName}" <${fromEmail}>`,
         to: to,
         subject: subject,
-        html: htmlContent
+        html: htmlContent,
+        attachments: attachments
       });
       
       console.log(`[Email Service] Real email sent successfully to ${to} via SMTP (MessageID: ${info.messageId}).`);
@@ -132,7 +254,8 @@ async function sendEmailNotification(to, subject, htmlContent) {
           personalizations: [{ to: [{ email: to }] }],
           from: { email: fromEmail, name: smtpSenderName },
           subject: subject,
-          content: [{ type: 'text/html', value: htmlContent }]
+          content: [{ type: 'text/html', value: htmlContent }],
+          attachments: relayAttachments
         })
       });
       if (response.ok) {
@@ -712,7 +835,7 @@ app.post('/api/auth/register', async (req, res) => {
             </ul>
           </div>
           
-          <p style="font-size: 14px; color: #333; line-height: 1.6;">You can now book certified Vedic purohits for homams, purchase organic sandalwood and puja essentials, and access the Gurukulam study circles.</p>
+          <p style="font-size: 14px; color: #333; line-height: 1.6;">You can now book certified Vedic purohits for homams, purchase pure sandalwood and puja essentials, and access the Gurukulam study circles.</p>
           <div style="text-align: center; margin: 25px 0;">
             <a href="https://gurupadukam.com/login" style="background-color: #5C0A20; color: #FCFBF8; padding: 12px 25px; text-decoration: none; font-weight: bold; border-radius: 6px; font-size: 14px; display: inline-block;">Access Devotee Portal</a>
           </div>
@@ -724,7 +847,7 @@ app.post('/api/auth/register', async (req, res) => {
       `;
       sendEmailNotification(email, subject, htmlContent);
       if (phone) {
-        sendSMSNotification(phone, `Hari Om ${name}! Welcome to Gurupadukam. Your devotee profile is active. Book Pujas & shop organic essentials at gurupadukam.com ✦`);
+        sendSMSNotification(phone, `Hari Om ${name}! Welcome to Gurupadukam. Your devotee profile is active. Book Pujas & shop pure essentials at gurupadukam.com ✦`);
       }
     }
 
@@ -932,16 +1055,7 @@ app.post('/api/auth/email-login/verify', async (req, res) => {
   try {
     let user = await dbGet("SELECT * FROM users WHERE email = ?", [email]);
     if (!user) {
-      const userId = 'usr-' + Math.random().toString(36).substr(2, 9);
-      const generatedPass = await bcrypt.hash(Math.random().toString(36), 10);
-      const regName = name || 'Devotee';
-      const totp_secret = null; // Email devotee login does not require Google Authenticator/TOTP
-
-      await dbRun(
-        "INSERT INTO users (id, name, email, password_hash, role, totp_secret, is_blocked) VALUES (?, ?, ?, ?, 'user', ?, 0)",
-        [userId, regName, email, generatedPass, totp_secret]
-      );
-      user = { id: userId, name: regName, email, role: 'user', location: null, is_blocked: 0, totp_secret };
+      return res.status(404).json({ error: 'Not Found', message: 'No account registered with this email. Please sign up first. ✦' });
     }
 
     if (user.is_blocked === 1) {
@@ -1126,17 +1240,7 @@ app.post('/api/auth/otp/verify', async (req, res) => {
     }
 
     if (!user) {
-      const userId = 'usr-' + Math.random().toString(36).substr(2, 9);
-      const generatedPass = await bcrypt.hash(Math.random().toString(36), 10);
-      const regName = name || 'Devotee';
-      const regEmail = `${cleanPhone}@phone.user`;
-      const targetRole = role === 'admin' ? 'admin' : 'user';
-
-      await dbRun(
-        "INSERT INTO users (id, name, email, password_hash, phone, role, is_blocked) VALUES (?, ?, ?, ?, ?, ?, 0)",
-        [userId, regName, regEmail, generatedPass, cleanPhone, targetRole]
-      );
-      user = { id: userId, name: regName, email: regEmail, role: targetRole, location: null, is_blocked: 0 };
+      return res.status(404).json({ error: 'Not Found', message: 'No account registered with this mobile number. Please sign up first. ✦' });
     }
 
     const token = generateToken({ id: user.id, name: user.name, email: user.email, role: user.role, location: user.location });
@@ -1371,7 +1475,7 @@ app.get('/api/auth/me', authenticateToken, async (req, res) => {
 });
 
 app.post('/api/auth/profile/update', authenticateToken, async (req, res) => {
-  const { name, phone, location, password, emailCode, otp } = req.body;
+  const { name, phone, location, password, emailCode, otp, communication_preferences } = req.body;
 
   try {
     const user = await dbGet("SELECT * FROM users WHERE id = ?", [req.user.id]);
@@ -1399,8 +1503,8 @@ app.post('/api/auth/profile/update', authenticateToken, async (req, res) => {
 
     // B. Compile and Execute Updates
     const cleanPhone = phone ? normalizePhone(phone) : user.phone;
-    let query = "UPDATE users SET name = ?, phone = ?, location = ?";
-    let params = [name || user.name, cleanPhone, location || user.location];
+    let query = "UPDATE users SET name = ?, phone = ?, location = ?, communication_preferences = ?";
+    let params = [name || user.name, cleanPhone, location || user.location, communication_preferences ? JSON.stringify(communication_preferences) : user.communication_preferences];
 
     if (password) {
       if (password.length < 8) {
@@ -1762,8 +1866,53 @@ app.post('/api/payments/razorpay/order', authenticateToken, async (req, res) => 
   }
 });
 
-
 // --- 5. E-Commerce Order Placement & Sync APIs ---
+
+// Dynamic Shipping Calculator API
+app.post('/api/shipping/calculate', async (req, res) => {
+  const { cartItems, pincode } = req.body;
+  if (!cartItems || cartItems.length === 0) {
+    return res.status(400).json({ error: 'Bad Request', message: 'Cart is empty.' });
+  }
+
+  try {
+    let weightGrams = 0;
+    cartItems.forEach(item => {
+      weightGrams += (item.weightGrams || 500) * item.quantity;
+    });
+
+    const isMetro = ['1', '4', '5', '6', '7'].includes(pincode?.toString().charAt(0));
+    
+    let shippingCost = 0;
+    let estimatedDays = '5-7 Business Days';
+    
+    // Flat rate logic
+    if (weightGrams <= 500) {
+      shippingCost = isMetro ? 60 : 80;
+    } else if (weightGrams <= 2000) {
+      shippingCost = isMetro ? 120 : 150;
+      estimatedDays = '4-6 Business Days';
+    } else {
+      shippingCost = 250 + (Math.ceil((weightGrams - 2000) / 1000) * 50);
+      estimatedDays = '7-10 Business Days';
+    }
+
+    // Free shipping threshold
+    const subtotal = cartItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    if (subtotal > 2000) {
+      shippingCost = 0;
+    }
+
+    res.json({
+      success: true,
+      cost: shippingCost,
+      estimatedDelivery: estimatedDays,
+      weightGrams
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: 'Failed to calculate shipping.' });
+  }
+});
 
 app.post('/api/orders', authenticateToken, async (req, res) => {
   const { 
@@ -2558,7 +2707,7 @@ app.get('/api/admin/welfare', authenticateToken, requireAdminOrSuper, async (req
 
 app.post('/api/purohits/:id/book', authenticateToken, async (req, res) => {
   const purohitId = req.params.id;
-  const { poojaType, bookingDate, timeSlot, ritualMode } = req.body;
+  const { poojaType, bookingDate, timeSlot, ritualMode, email } = req.body;
   let { address } = req.body;
   
   if (ritualMode === 'Online' && !address) {
@@ -2577,8 +2726,8 @@ app.post('/api/purohits/:id/book', authenticateToken, async (req, res) => {
 
     const defaultChecklist = poojaType === 'Vivaham' 
       ? [
-          { id: 'item-1', name: 'Organic Pasupu (Turmeric Powder) - 100g', quantity: 5, price: 149, isStoreProduct: true, storeProductId: 'p1' },
-          { id: 'item-2', name: 'Organic Kumkum - 100g', quantity: 2, price: 129, isStoreProduct: true, storeProductId: 'p2' },
+          { id: 'item-1', name: 'Pure Pasupu (Turmeric Powder) - 100g', quantity: 5, price: 149, isStoreProduct: true, storeProductId: 'p1' },
+          { id: 'item-2', name: 'Pure Kumkum - 100g', quantity: 2, price: 129, isStoreProduct: true, storeProductId: 'p2' },
           { id: 'item-3', name: 'Gandham (Chandanam Sandalwood Paste) - 50g', quantity: 2, price: 249, isStoreProduct: true, storeProductId: 'p3' },
           { id: 'item-4', name: 'Yagnopavitam (Sacred Janeu Cotton Threads)', quantity: 3, price: 199, isStoreProduct: true, storeProductId: 'p5' },
           { id: 'item-5', name: 'Complete 5-in-1 Puja Combo Kit', quantity: 1, price: 599, isStoreProduct: true, storeProductId: 'p6' },
@@ -2589,30 +2738,25 @@ app.post('/api/purohits/:id/book', authenticateToken, async (req, res) => {
       : poojaType === 'Satyanarayana Vratam'
       ? [
           { id: 'item-1', name: 'Complete 5-in-1 Puja Combo Kit', quantity: 1, price: 599, isStoreProduct: true, storeProductId: 'p6' },
-          { id: 'item-2', name: 'Organic Pasupu (Turmeric Powder) - 100g', quantity: 2, price: 149, isStoreProduct: true, storeProductId: 'p1' },
-          { id: 'item-3', name: 'Organic Kumkum - 100g', quantity: 1, price: 129, isStoreProduct: true, storeProductId: 'p2' },
+          { id: 'item-2', name: 'Pure Pasupu (Turmeric Powder) - 100g', quantity: 2, price: 149, isStoreProduct: true, storeProductId: 'p1' },
+          { id: 'item-3', name: 'Pure Kumkum - 100g', quantity: 1, price: 129, isStoreProduct: true, storeProductId: 'p2' },
           { id: 'item-4', name: 'Gandham (Chandanam Sandalwood Paste) - 50g', quantity: 1, price: 249, isStoreProduct: true, storeProductId: 'p3' },
           { id: 'item-5', name: 'Sacred Coconuts', quantity: 2, price: 40, isStoreProduct: false }
         ]
       : [
           { id: 'item-1', name: 'Complete 5-in-1 Puja Combo Kit', quantity: 1, price: 599, isStoreProduct: true, storeProductId: 'p6' },
-          { id: 'item-2', name: 'Organic Pasupu (Turmeric Powder) - 100g', quantity: 1, price: 149, isStoreProduct: true, storeProductId: 'p1' },
-          { id: 'item-3', name: 'Organic Kumkum - 100g', quantity: 1, price: 129, isStoreProduct: true, storeProductId: 'p2' }
+          { id: 'item-2', name: 'Pure Pasupu (Turmeric Powder) - 100g', quantity: 1, price: 149, isStoreProduct: true, storeProductId: 'p1' },
+          { id: 'item-3', name: 'Pure Kumkum - 100g', quantity: 1, price: 129, isStoreProduct: true, storeProductId: 'p2' }
         ];
 
     const mode = ritualMode || 'Offline';
-    const generateMeetCode = () => {
-      const abc = 'abcdefghijklmnopqrstuvwxyz';
-      const part = (len) => Array.from({ length: len }, () => abc[Math.floor(Math.random() * abc.length)]).join('');
-      return `https://meet.google.com/${part(3)}-${part(4)}-${part(3)}`;
-    };
-    const meetLink = mode === 'Online' ? generateMeetCode() : null;
-
+    const mode = ritualMode || 'Offline';
     const bookingId = 'bk-' + Math.random().toString(36).substr(2, 9);
+    
     await dbRun(
       `INSERT INTO purohit_bookings (id, purohit_id, user_id, pooja_type, booking_date, time_slot, address, status, items, secure_deposit, ritual_mode, google_meet_link)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'Confirmed', ?, 500, ?, ?)`,
-      [bookingId, purohitId, req.user.id, poojaType, bookingDate, timeSlot, address, JSON.stringify(defaultChecklist), mode, meetLink]
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending_Acharya_Confirmation', ?, 500, ?, ?)`,
+      [bookingId, purohitId, req.user.id, poojaType, bookingDate, timeSlot, address, JSON.stringify(defaultChecklist), mode, null]
     );
 
     // Increment bookings count
@@ -2625,104 +2769,146 @@ app.post('/api/purohits/:id/book', authenticateToken, async (req, res) => {
       [notifId, `New Purohit Booking`, `Purohit booking ${bookingId} placed by ${req.user.name} for ${poojaType} on ${bookingDate}.`]
     );
 
-    // Send Booking Confirmation Email & SMS
+    // Send Booking Notification Email & SMS to Priest only (Devotee gets notified on Confirmation)
     try {
       const devotee = await dbGet("SELECT name, email, phone FROM users WHERE id = ?", [req.user.id]);
       const priestUser = await dbGet("SELECT email, phone FROM users WHERE id = ?", [purohitId]);
 
-      const devoteeEmail = devotee?.email || req.user.email;
+      const devoteeEmail = email || devotee?.email || req.user.email;
       const devoteePhone = devotee?.phone;
       const devoteeName = devotee?.name || req.user.name;
 
-      // 1. Notify Devotee
-      const devoteeSubject = `✦ Confirmed Booking: Vedic Ritual with ${purohit.name} Acharya 🌿`;
-      
-      let checklistHtml = '';
-      for (const item of defaultChecklist) {
-        checklistHtml += `
-          <li><strong>${item.name}</strong> (Qty: ${item.quantity}) - ${item.isStoreProduct ? 'Available in Gurupadukam Store' : 'Arrange locally'}</li>
-        `;
+      if (email && !devotee?.email) {
+        await dbRun("UPDATE users SET email = ? WHERE id = ?", [email, req.user.id]);
       }
 
-      const devoteeHtml = `
-        <div style="font-family: Arial, sans-serif; padding: 25px; border: 2px solid #C9943A; border-radius: 12px; max-width: 600px; background-color: #FCFBF8; margin: auto;">
-          <h2 style="color: #5C0A20; text-align: center; border-bottom: 2px solid #C9943A; padding-bottom: 12px; margin-top: 0;">gurupadukam.com</h2>
-          <p style="font-size: 15px; color: #1A1A1A; font-weight: bold;">Hari Om, ${devoteeName} ji!</p>
-          <p style="font-size: 13px; color: #333; line-height: 1.5;">Your sacred booking for the <strong>${poojaType}</strong> ritual has been confirmed! Our certified Vedic Purohit, ${purohit.name}, has accepted this spiritual assignment.</p>
-          
-          <div style="margin: 20px 0; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 15px; font-size: 12px; line-height: 1.6;">
-            <strong style="color: #5C0A20; font-size: 13px; display: block; border-bottom: 1px solid #eee; padding-bottom: 5px; margin-bottom: 8px;">Ritual Coordinates:</strong>
-            <strong>Booking ID:</strong> ${bookingId}<br>
-            <strong>Pooja Type:</strong> ${poojaType}<br>
-            <strong>Date:</strong> ${bookingDate}<br>
-            <strong>Time Slot:</strong> ${timeSlot}<br>
-            <strong>Purohit:</strong> ${purohit.name}<br>
-            <strong>Ritual Venue Address:</strong> ${address}${mode === 'Online' ? `<br><strong>Google Meet Link:</strong> <a href="${meetLink}" style="color: #5C0A20; font-weight: bold;">Join Google Meet Session</a>` : ''}
-          </div>
-
-          <div style="margin: 20px 0; background: rgba(201,148,58,0.05); border: 1px solid #C9943A; border-radius: 6px; padding: 15px; font-size: 12px; line-height: 1.6;">
-            <strong style="color: #5C0A20; font-size: 13px; display: block; border-bottom: 1px solid #C9943A; padding-bottom: 5px; margin-bottom: 8px;">🌿 Sacred Puja Samagri Checklist:</strong>
-            <ul style="margin: 5px 0 0 0; padding-left: 20px;">
-              ${checklistHtml}
-            </ul>
-            <p style="font-size: 11px; margin-top: 8px; color: #555; font-style: italic;">Note: Organic puja kits can be purchased directly from the Gurupadukam store with 1-click delivery to your doorstep.</p>
-          </div>
-
-          <p style="font-size: 13px; color: #333; line-height: 1.5;">Our Purohit will contact you shortly to coordinate any specific details or family gotra/nakshatra sankalpam inputs.</p>
-          <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
-          <p style="font-size: 9px; color: #999; text-align: center; margin-top: 10px;">For assistance, contact care.gurupadukam@gmail.com. © gurupadukam.com. All rights reserved.</p>
-        </div>
-      `;
-
-      sendEmailNotification(devoteeEmail, devoteeSubject, devoteeHtml);
-      if (devoteePhone) {
-        const smsMsg = mode === 'Online'
-          ? `Hari Om! Online Puja confirmed with ${purohit.name} on ${bookingDate}. Join Google Meet: ${meetLink} ✦`
-          : `Hari Om! Puja booking ${bookingId} confirmed with ${purohit.name} for ${poojaType} on ${bookingDate}. Details sent to email ✦`;
-        sendSMSNotification(devoteePhone, smsMsg);
-      }
-
-      // 2. Notify Priest (if email exists)
+      // Notify Priest
       if (priestUser && priestUser.email) {
-        const priestSubject = `✦ New Sacred Pooja Booking: ${poojaType} – Gurupadukam Priest Panel 🌿`;
+        const priestSubject = `✦ Action Required: New Pooja Booking: ${poojaType} – Gurupadukam 🌿`;
         const priestHtml = `
           <div style="font-family: Arial, sans-serif; padding: 25px; border: 2px solid #C9943A; border-radius: 12px; max-width: 600px; background-color: #FCFBF8; margin: auto;">
             <h2 style="color: #5C0A20; text-align: center; border-bottom: 2px solid #C9943A; padding-bottom: 12px; margin-top: 0;">gurupadukam.com</h2>
             <p style="font-size: 15px; color: #1A1A1A; font-weight: bold;">Hari Om, ${purohit.name} Acharya ji!</p>
-            <p style="font-size: 13px; color: #333; line-height: 1.5;">You have been assigned a new sacred pooja booking on the Gurupadukam platform. Please find the devotee and booking coordinates below:</p>
+            <p style="font-size: 13px; color: #333; line-height: 1.5;">You have been requested for a new sacred pooja booking. Please review and confirm to generate the Google Meet link (if online).</p>
             
             <div style="margin: 20px 0; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 15px; font-size: 12px; line-height: 1.6;">
-              <strong style="color: #5C0A20; font-size: 13px; display: block; border-bottom: 1px solid #eee; padding-bottom: 5px; margin-bottom: 8px;">Assignment Details:</strong>
+              <strong style="color: #5C0A20; font-size: 13px; display: block; border-bottom: 1px solid #eee; padding-bottom: 5px; margin-bottom: 8px;">Request Details:</strong>
               <strong>Booking ID:</strong> ${bookingId}<br>
               <strong>Pooja Type:</strong> ${poojaType}<br>
               <strong>Date:</strong> ${bookingDate}<br>
               <strong>Time Slot:</strong> ${timeSlot}<br>
               <strong>Devotee Name:</strong> ${devoteeName}<br>
               <strong>Devotee Contact:</strong> ${devoteePhone || devoteeEmail}<br>
-              <strong>Venue Address:</strong> ${address}${mode === 'Online' ? `<br><strong>Google Meet Link:</strong> <a href="${meetLink}" style="color: #5C0A20; font-weight: bold;">Join Google Meet Session</a>` : ''}
+              <strong>Venue Address:</strong> ${address}
             </div>
 
-            <p style="font-size: 13px; color: #333; line-height: 1.5;">Please contact the devotee soon to confirm gotra details and prepare for the ritual. The checklist has been shared with the devotee.</p>
+            <p style="font-size: 13px; color: #333; line-height: 1.5;">Log in to your Purohit Dashboard to confirm the booking.</p>
             <div style="text-align: center; margin: 25px 0;">
               <a href="https://gurupadukam.com/login" style="background-color: #5C0A20; color: #FCFBF8; padding: 12px 25px; text-decoration: none; font-weight: bold; border-radius: 6px; font-size: 14px; display: inline-block;">Access Priest Workspace</a>
             </div>
-            <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
-            <p style="font-size: 9px; color: #999; text-align: center; margin-top: 10px;">© gurupadukam.com. All rights reserved.</p>
           </div>
         `;
-        sendEmailNotification(priestUser.email, priestSubject, priestHtml);
+        sendEmailNotification(priestUser.email, priestSubject, priestHtml, []);
         if (priestUser.phone) {
-          const smsMsg = mode === 'Online'
-            ? `Hari Om Acharya ji! Online Puja confirmed with devotee ${devoteeName} on ${bookingDate}. Join Google Meet: ${meetLink} ✦`
-            : `Hari Om Acharya ji! New booking ${bookingId} for ${poojaType} on ${bookingDate} with devotee ${devoteeName}. Contact details in email ✦`;
+          const smsMsg = `Hari Om Acharya ji! Pending booking ${bookingId} for ${poojaType} on ${bookingDate} with devotee ${devoteeName}. Please login to confirm ✦`;
           sendSMSNotification(priestUser.phone, smsMsg);
         }
       }
     } catch (notifErr) {
-      console.error('[Notification Dispatch Failed on Booking]:', notifErr.message);
+      console.error('[Notification Dispatch Failed on Booking Request]:', notifErr.message);
     }
 
-    res.status(201).json({ message: 'Purohit booking placed and confirmed successfully!', bookingId });
+    res.status(201).json({ 
+      message: 'Purohit booking requested! Awaiting Acharya confirmation.', 
+      bookingId
+    });  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
+app.post('/api/purohits/bookings/:bookingId/confirm', authenticateToken, requirePurohitRole, async (req, res) => {
+  const { bookingId } = req.params;
+  
+  try {
+    const booking = await dbGet("SELECT * FROM purohit_bookings WHERE id = ?", [bookingId]);
+    if (!booking) {
+      return res.status(404).json({ error: 'Not Found', message: 'Booking not found.' });
+    }
+
+    if (booking.purohit_id !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden', message: 'You are not authorized to confirm this booking.' });
+    }
+
+    if (booking.status === 'Confirmed') {
+      return res.status(400).json({ error: 'Bad Request', message: 'Booking is already confirmed.' });
+    }
+
+    const purohit = await dbGet("SELECT * FROM purohits WHERE id = ?", [req.user.id]);
+    const devotee = await dbGet("SELECT name, email, phone, communication_preferences FROM users WHERE id = ?", [booking.user_id]);
+    
+    if (!purohit || !devotee) {
+      return res.status(404).json({ error: 'Not Found', message: 'Related users not found.' });
+    }
+
+    const generateMeetCode = () => {
+      const abc = 'abcdefghijklmnopqrstuvwxyz';
+      const part = (len) => Array.from({ length: len }, () => abc[Math.floor(Math.random() * abc.length)]).join('');
+      return `https://meet.google.com/${part(3)}-${part(4)}-${part(3)}`;
+    };
+    const meetLink = booking.ritual_mode === 'Online' ? generateMeetCode() : null;
+
+    await dbRun(
+      "UPDATE purohit_bookings SET status = 'Confirmed', google_meet_link = ? WHERE id = ?",
+      [meetLink, bookingId]
+    );
+
+    // Prepare Notifications
+    const prefs = devotee.communication_preferences ? JSON.parse(devotee.communication_preferences) : { sms: true, whatsapp: true, email: true };
+    const calendarSummary = `Vedic Ritual: ${booking.pooja_type} with ${purohit.name} Acharya`;
+    const calendarDesc = `Hari Om! Your sacred booking for ${booking.pooja_type} is confirmed.\n\nBooking ID: ${bookingId}\nPurohit: ${purohit.name}\nDate: ${booking.booking_date}\nTime: ${booking.time_slot}\nLocation: ${booking.address}\n\nGoogle Meet: ${meetLink || 'N/A'}\n\nThank you for choosing gurupadukam.com.`;
+
+    const icsString = generateICS(bookingId, booking.pooja_type, booking.booking_date, booking.time_slot, meetLink || booking.address, calendarSummary, calendarDesc);
+    const googleCalendarUrl = generateGoogleCalendarUrl(bookingId, booking.pooja_type, booking.booking_date, booking.time_slot, meetLink || booking.address, calendarSummary, calendarDesc);
+
+    if (prefs.email && devotee.email) {
+      const emailAttachments = [{ filename: 'invite.ics', content: icsString, contentType: 'text/calendar; charset=utf-8; method=REQUEST' }];
+      const devoteeSubject = `✦ Confirmed Booking: Vedic Ritual with ${purohit.name} Acharya 🌿`;
+      const devoteeHtml = `
+        <div style="font-family: Arial, sans-serif; padding: 25px; border: 2px solid #C9943A; border-radius: 12px; max-width: 600px; background-color: #FCFBF8; margin: auto;">
+          <h2 style="color: #5C0A20; text-align: center; border-bottom: 2px solid #C9943A; padding-bottom: 12px; margin-top: 0;">gurupadukam.com</h2>
+          <p style="font-size: 15px; color: #1A1A1A; font-weight: bold;">Hari Om, ${devotee.name} ji!</p>
+          <p style="font-size: 13px; color: #333; line-height: 1.5;">Your sacred booking for the <strong>${booking.pooja_type}</strong> ritual has been confirmed! Our certified Vedic Purohit, ${purohit.name}, has accepted this spiritual assignment.</p>
+          
+          <div style="margin: 20px 0; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 15px; font-size: 12px; line-height: 1.6;">
+            <strong style="color: #5C0A20; font-size: 13px; display: block; border-bottom: 1px solid #eee; padding-bottom: 5px; margin-bottom: 8px;">Ritual Coordinates:</strong>
+            <strong>Booking ID:</strong> ${bookingId}<br>
+            <strong>Pooja Type:</strong> ${booking.pooja_type}<br>
+            <strong>Date:</strong> ${booking.booking_date}<br>
+            <strong>Time Slot:</strong> ${booking.time_slot}<br>
+            <strong>Purohit:</strong> ${purohit.name}<br>
+            <strong>Ritual Venue Address:</strong> ${booking.address}${booking.ritual_mode === 'Online' ? `<br><strong>Google Meet Link:</strong> <a href="${meetLink}" style="color: #5C0A20; font-weight: bold;">Join Google Meet Session</a>` : ''}
+          </div>
+
+          <div style="text-align: center; margin: 25px 0;">
+            <a href="${googleCalendarUrl}" style="background-color: #C9943A; color: #5C0A20; padding: 12px 25px; text-decoration: none; font-weight: bold; border-radius: 6px; font-size: 13px; display: inline-block; border: 1px solid #5C0A20; text-transform: uppercase; letter-spacing: 1px;">Add to Google Calendar 📅</a>
+          </div>
+
+          <p style="font-size: 13px; color: #333; line-height: 1.5;">Our Purohit will contact you shortly to coordinate any specific details or family gotra/nakshatra sankalpam inputs.</p>
+        </div>
+      `;
+      sendEmailNotification(devotee.email, devoteeSubject, devoteeHtml, emailAttachments);
+    }
+
+    if (devotee.phone) {
+      const msg = booking.ritual_mode === 'Online'
+        ? `Hari Om! Online Puja confirmed with ${purohit.name} on ${booking.booking_date}. Join Google Meet: ${meetLink} ✦`
+        : `Hari Om! Puja booking ${bookingId} confirmed with ${purohit.name} for ${booking.pooja_type} on ${booking.booking_date}. ✦`;
+      
+      if (prefs.sms) sendSMSNotification(devotee.phone, msg);
+      if (prefs.whatsapp) console.log(\`[Simulated WhatsApp to \${devotee.phone}]: \${msg}\`);
+    }
+
+    res.json({ message: 'Booking confirmed successfully', googleMeetLink: meetLink });
   } catch (err) {
     res.status(500).json({ error: 'Internal Error', message: err.message });
   }
@@ -2888,8 +3074,8 @@ app.post('/api/quotes/:id/accept', authenticateToken, async (req, res) => {
 
     const defaultChecklist = [
       { id: 'item-1', name: 'Complete 5-in-1 Puja Combo Kit', quantity: 1, price: 599, isStoreProduct: true, storeProductId: 'p6' },
-      { id: 'item-2', name: 'Organic Pasupu (Turmeric Powder) - 100g', quantity: 1, price: 149, isStoreProduct: true, storeProductId: 'p1' },
-      { id: 'item-3', name: 'Organic Kumkum - 100g', quantity: 1, price: 129, isStoreProduct: true, storeProductId: 'p2' }
+      { id: 'item-2', name: 'Pure Pasupu (Turmeric Powder) - 100g', quantity: 1, price: 149, isStoreProduct: true, storeProductId: 'p1' },
+      { id: 'item-3', name: 'Pure Kumkum - 100g', quantity: 1, price: 129, isStoreProduct: true, storeProductId: 'p2' }
     ];
 
     await dbRun(
@@ -3461,6 +3647,72 @@ app.use((req, res, next) => {
 // ==========================================
 // ============ UPGRADE WEBSOCKET ============
 // ==========================================
+
+// ✦ DAILY CRON JOB: 24-Hour Priest Booking Reminders ✦
+cron.schedule('0 8 * * *', async () => {
+  console.log('[Cron] Running daily 24-hour reminder check for Purohit Bookings...');
+  try {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowStr = tomorrow.toISOString().split('T')[0];
+
+    const upcomingBookings = await dbQuery(
+      `SELECT b.*, 
+              u.email as devotee_email, u.phone as devotee_phone, u.name as devotee_name, 
+              p.name as priest_name, 
+              pu.email as priest_email, pu.phone as priest_phone
+       FROM purohit_bookings b
+       JOIN users u ON b.user_id = u.id
+       JOIN purohits p ON b.purohit_id = p.id
+       LEFT JOIN users pu ON b.purohit_id = pu.id
+       WHERE b.booking_date = ? AND b.status = 'Confirmed'`,
+      [tomorrowStr]
+    );
+
+    for (const booking of upcomingBookings) {
+      const { id, pooja_type, time_slot, address, ritual_mode, google_meet_link, devotee_email, devotee_phone, devotee_name, priest_name, priest_email, priest_phone } = booking;
+      
+      // 1. Send Devotee Reminder
+      if (devotee_email) {
+        const subject = `✦ Reminder: Your Sacred Pooja (${pooja_type}) is Tomorrow 🌿`;
+        const html = `<div style="font-family: Arial, sans-serif; padding: 25px; border: 2px solid #C9943A; border-radius: 12px; max-width: 600px; background-color: #FCFBF8; margin: auto;">
+          <h2 style="color: #5C0A20; text-align: center; border-bottom: 2px solid #C9943A; padding-bottom: 12px; margin-top: 0;">gurupadukam.com</h2>
+          <p style="font-size: 15px; color: #1A1A1A; font-weight: bold;">Hari Om ${devotee_name} ji,</p>
+          <p style="font-size: 13px; color: #333; line-height: 1.5;">This is a gentle reminder that your <strong>${pooja_type}</strong> with ${priest_name} Acharya is scheduled for tomorrow at <strong>${time_slot}</strong>.</p>
+          <div style="margin: 20px 0; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 15px; font-size: 12px; line-height: 1.6;">
+            <strong>Venue Address:</strong> ${address}
+            ${ritual_mode === 'Online' ? `<br><br><strong>Google Meet Link:</strong> <a href="${google_meet_link}" style="color: #5C0A20; font-weight: bold;">Join Google Meet Session</a>` : ''}
+          </div>
+          <p style="font-size: 13px; color: #333;">Please ensure your family members are ready and the items are prepared. Have a blissful ritual.</p>
+        </div>`;
+        sendEmailNotification(devotee_email, subject, html);
+      }
+      if (devotee_phone) {
+        sendSMSNotification(devotee_phone, `Hari Om! Reminder: Your ${pooja_type} with ${priest_name} is tomorrow at ${time_slot}. ${ritual_mode === 'Online' ? 'Check email for Meet link.' : ''}`);
+      }
+
+      // 2. Send Priest Reminder
+      if (priest_email) {
+        const subject = `✦ Reminder: You have a ${pooja_type} Booking Tomorrow 🌿`;
+        const html = `<div style="font-family: Arial, sans-serif; padding: 25px; border: 2px solid #C9943A; border-radius: 12px; max-width: 600px; background-color: #FCFBF8; margin: auto;">
+          <h2 style="color: #5C0A20; text-align: center; border-bottom: 2px solid #C9943A; padding-bottom: 12px; margin-top: 0;">gurupadukam.com</h2>
+          <p style="font-size: 15px; color: #1A1A1A; font-weight: bold;">Hari Om ${priest_name} Acharya ji,</p>
+          <p style="font-size: 13px; color: #333; line-height: 1.5;">This is a reminder for your upcoming <strong>${pooja_type}</strong> tomorrow at <strong>${time_slot}</strong> with devotee <strong>${devotee_name}</strong>.</p>
+          <div style="margin: 20px 0; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 15px; font-size: 12px; line-height: 1.6;">
+            <strong>Venue Address:</strong> ${address}
+            ${ritual_mode === 'Online' ? `<br><br><strong>Google Meet Link:</strong> <a href="${google_meet_link}" style="color: #5C0A20; font-weight: bold;">Join Google Meet Session</a>` : ''}
+          </div>
+        </div>`;
+        sendEmailNotification(priest_email, subject, html);
+      }
+      if (priest_phone) {
+        sendSMSNotification(priest_phone, `Hari Om Acharya ji! Reminder: You have a ${pooja_type} tomorrow at ${time_slot} for ${devotee_name}. Please be prepared.`);
+      }
+    }
+  } catch (e) {
+    console.error('[Cron Error]', e.message);
+  }
+});
 
 const server = app.listen(PORT, API_BACKEND_HOST, () => {
   console.log(`Guru Padukam Production Backend listening at http://localhost:${PORT}`);
