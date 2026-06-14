@@ -190,14 +190,18 @@ function initializeDatabaseSQLite() {
     )`);
 
     db.run(`CREATE TABLE IF NOT EXISTS classes (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      instructor_name TEXT NOT NULL,
-      time TEXT NOT NULL,
-      fee REAL NOT NULL,
-      image TEXT NOT NULL,
-      description TEXT NOT NULL
-    )`);
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  instructor_name TEXT NOT NULL,
+  time TEXT NOT NULL,
+  fee REAL NOT NULL,
+  image TEXT NOT NULL,
+  description TEXT NOT NULL,
+  status TEXT DEFAULT 'approved',
+  proposer_name TEXT,
+  proposer_location TEXT,
+  video_url TEXT
+)`);
 
     db.run(`CREATE TABLE IF NOT EXISTS class_registrations (
       id TEXT PRIMARY KEY,
@@ -416,6 +420,8 @@ function initializeDatabaseSQLite() {
     db.run(`ALTER TABLE purohits ADD COLUMN gov_id_type TEXT`, (err) => {});
     db.run(`ALTER TABLE purohits ADD COLUMN gov_id_number TEXT`, (err) => {});
     db.run(`ALTER TABLE purohits ADD COLUMN gov_id_image TEXT`, (err) => {});
+    db.run(`ALTER TABLE events ADD COLUMN image TEXT`, (err) => {});
+    db.run(`ALTER TABLE classes ADD COLUMN video_url TEXT`, (err) => {});
 
     console.log('✦ SQLite database tables verified successfully.');
     await runSeeds();
@@ -508,14 +514,18 @@ async function initializeDatabaseMySQL() {
 
     // Classes Table
     await mysqlPool.query(`CREATE TABLE IF NOT EXISTS classes (
-      id VARCHAR(255) PRIMARY KEY,
-      title VARCHAR(255) NOT NULL,
-      instructor_name VARCHAR(255) NOT NULL,
-      time VARCHAR(255) NOT NULL,
-      fee DECIMAL(10,2) NOT NULL,
-      image VARCHAR(500) NOT NULL,
-      description TEXT NOT NULL
-    )`);
+  id VARCHAR(255) PRIMARY KEY,
+  title VARCHAR(255) NOT NULL,
+  instructor_name VARCHAR(255) NOT NULL,
+  time VARCHAR(255) NOT NULL,
+  fee DECIMAL(10,2) NOT NULL,
+  image VARCHAR(500) NOT NULL,
+  description TEXT NOT NULL,
+  status VARCHAR(100) DEFAULT 'approved',
+  proposer_name VARCHAR(255),
+  proposer_location VARCHAR(255),
+  video_url VARCHAR(1000)
+)`);
 
     // Class Registrations Table
     await mysqlPool.query(`CREATE TABLE IF NOT EXISTS class_registrations (
@@ -704,6 +714,7 @@ async function initializeDatabaseMySQL() {
     try { await mysqlPool.query(`ALTER TABLE purohits ADD COLUMN gov_id_type TEXT`); } catch (e) {}
     try { await mysqlPool.query(`ALTER TABLE purohits ADD COLUMN gov_id_number TEXT`); } catch (e) {}
     try { await mysqlPool.query(`ALTER TABLE purohits ADD COLUMN gov_id_image TEXT`); } catch (e) {}
+    try { await mysqlPool.query(`ALTER TABLE events ADD COLUMN image TEXT`); } catch (e) {}
 
     try {
       await mysqlPool.query(`CREATE TABLE IF NOT EXISTS parinayam_profiles (
@@ -774,6 +785,10 @@ async function initializeDatabaseMySQL() {
 
     try {
       await mysqlPool.query(`ALTER TABLE parinayam_profiles ADD COLUMN is_closed INT DEFAULT 0`);
+    } catch (e) {}
+
+    try {
+      await mysqlPool.query(`ALTER TABLE classes ADD COLUMN video_url VARCHAR(1000)`);
     } catch (e) {}
 
     console.log('✦ Hostinger MySQL database tables verified successfully.');
@@ -962,7 +977,7 @@ async function seedUsers() {
 
     const existingSuperAdmin = await dbGet("SELECT * FROM users WHERE email = 'care.gurupadukam@gmail.com'");
     if (!existingSuperAdmin) {
-      const superAdminId = 'usr-superadmin';
+      const superAdminId = 'admin_1';
       const passwordHash = await bcrypt.hash('admin123', 10);
       await dbRun(
         "INSERT INTO users (id, name, email, password_hash, role, phone) VALUES (?, ?, ?, ?, ?, ?)",
@@ -974,17 +989,16 @@ async function seedUsers() {
     const existingAdmins = await dbGet("SELECT * FROM users WHERE role = 'admin'");
     if (!existingAdmins) {
       const locations = [
-        { name: 'Hyderabad Admin', email: 'hyd@gurupadukam.com', loc: 'Hyderabad' },
-        { name: 'Bengaluru Admin', email: 'blr@gurupadukam.com', loc: 'Bengaluru' },
-        { name: 'Chennai Admin', email: 'maa@gurupadukam.com', loc: 'Chennai' }
+        { id: 'admin_2', name: 'Hyderabad Admin', email: 'hyd@gurupadukam.com', loc: 'Hyderabad' },
+        { id: 'admin_3', name: 'Bengaluru Admin', email: 'blr@gurupadukam.com', loc: 'Bengaluru' },
+        { id: 'admin_4', name: 'Chennai Admin', email: 'maa@gurupadukam.com', loc: 'Chennai' }
       ];
 
       for (const admin of locations) {
-        const adminId = `usr-admin-${admin.loc.toLowerCase()}`;
         const passwordHash = await bcrypt.hash('admin123', 10);
         await dbRun(
           "INSERT INTO users (id, name, email, password_hash, role, location, phone) VALUES (?, ?, ?, ?, ?, ?, ?)",
-          [adminId, admin.name, admin.email, passwordHash, 'admin', admin.loc, '+919999999999']
+          [admin.id, admin.name, admin.email, passwordHash, 'admin', admin.loc, '+919999999999']
         );
       }
       console.log('✦ 3 Location-based Admins seeded (Hyderabad, Bengaluru, Chennai).');
@@ -992,13 +1006,23 @@ async function seedUsers() {
 
     // Delete old purohit users to avoid duplicates
     await dbRun("DELETE FROM users WHERE role = 'purohit'");
-    const priestId = 'purohit-ramakrishna';
     const passwordHash = await bcrypt.hash('admin123', 10);
-    await dbRun(
-      "INSERT INTO users (id, name, email, password_hash, role, phone, location) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [priestId, 'Shri Ramakrishna Sharma', 'priest@gurupadukam.com', passwordHash, 'purohit', '+919876543210', 'Hyderabad']
-    );
-    console.log('✦ Demo Vetted Priest user seeded: Shri Ramakrishna Sharma. Email: priest@gurupadukam.com');
+    
+    const purohitUsers = [
+      { id: 'acharya_1', name: 'Shri Ramakrishna Sharma', email: 'priest@gurupadukam.com', phone: '+919876543210', location: 'Hyderabad' },
+      { id: 'acharya_2', name: 'Shri Dwivedi Shastri Acharya', email: 'dwivedi@gurupadukam.com', phone: '+919876543211', location: 'Hyderabad' },
+      { id: 'acharya_3', name: 'Shri Sharma Shastri', email: 'shastri@gurupadukam.com', phone: '+919876543212', location: 'Bengaluru' },
+      { id: 'acharya_4', name: 'Shri Acharya Ramulu', email: 'ramulu@gurupadukam.com', phone: '+919876543213', location: 'Chennai' },
+      { id: 'acharya_5', name: 'Shri Srinivasa Acharya', email: 'srinivasa@gurupadukam.com', phone: '+919876543214', location: 'Hyderabad' }
+    ];
+
+    for (const p of purohitUsers) {
+      await dbRun(
+        "INSERT INTO users (id, name, email, password_hash, role, phone, location) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [p.id, p.name, p.email, passwordHash, 'purohit', p.phone, p.location]
+      );
+    }
+    console.log('✦ Seeded 5 Vetted Priests in users table.');
   } catch (err) {
     console.error('Error seeding users:', err.message);
   }
@@ -1142,7 +1166,8 @@ async function seedVedicSystem() {
         time: 'Every Saturday, 6:00 PM IST',
         fee: 0,
         image: '/images/ramayana_family.png',
-        description: 'A divine immersion into the Valmiki Ramayana. Learn shloka recitation, Telugu meanings, and timeless moral values from the life of Maryada Purushottama Sri Rama.'
+        description: 'A divine immersion into the Valmiki Ramayana. Learn shloka recitation, Telugu meanings, and timeless moral values from the life of Maryada Purushottama Sri Rama.',
+        video_url: 'https://www.youtube.com/embed/dQw4w9WgXcQ'
       },
       {
         id: 'cls-2',
@@ -1151,7 +1176,8 @@ async function seedVedicSystem() {
         time: 'Every Sunday, 5:00 PM IST',
         fee: 0,
         image: 'https://images.unsplash.com/photo-1545205597-3d9d02c29597?auto=format&fit=crop&q=80&w=800',
-        description: 'Master the accurate Sanskrit pronunciation, sandhi rules, and absolute word-by-word meanings of the 700 Bhagavad Gita shlokas to align your actions with Dharma.'
+        description: 'Master the accurate Sanskrit pronunciation, sandhi rules, and absolute word-by-word meanings of the 700 Bhagavad Gita shlokas to align your actions with Dharma.',
+        video_url: 'https://www.youtube.com/embed/dQw4w9WgXcQ'
       },
       {
         id: 'cls-3',
@@ -1160,7 +1186,8 @@ async function seedVedicSystem() {
         time: 'Mon - Wed, 6:30 AM IST',
         fee: 0,
         image: 'https://t4.ftcdn.net/jpg/04/83/67/61/360_F_483676144_8XDkDIhdzlCkwrMGKquArnzrTgJRixh3.jpg',
-        description: 'Explore the grandeur of Vyasa Mahabharata (Bharatham). Dive deep into the philosophical discourses, the stories of ancient kings, and the lessons of truth and karma.'
+        description: 'Explore the grandeur of Vyasa Mahabharata (Bharatham). Dive deep into the philosophical discourses, the stories of ancient kings, and the lessons of truth and karma.',
+        video_url: null
       },
       {
         id: 'cls-4',
@@ -1169,65 +1196,132 @@ async function seedVedicSystem() {
         time: 'Every Thursday, 6:30 PM IST',
         fee: 0,
         image: 'https://images.unsplash.com/photo-1509316975850-ff9c5deb0cd9?auto=format&fit=crop&q=80&w=800',
-        description: 'Learn to recite Adi Shankaracharyas Soundarya Lahari. Experience the acoustic beauty and spiritual power of these 100 hymns glorifying the Divine Mother.'
+        description: 'Learn to recite Adi Shankaracharyas Soundarya Lahari. Experience the acoustic beauty and spiritual power of these 100 hymns glorifying the Divine Mother.',
+        video_url: 'https://www.youtube.com/embed/dQw4w9WgXcQ'
+      },
+      {
+        id: 'cls-5',
+        title: 'Rigveda Samhita Chanting & Phonetics',
+        instructor_name: 'Shri Ramakrishna Sharma',
+        time: 'Mon & Fri, 7:00 AM IST',
+        fee: 0,
+        image: 'https://images.unsplash.com/photo-1545128485-c400e7702796?q=80&w=800',
+        description: 'An introductory course to the Rigvedic Samhita. Master the accurate swaras (udatta, anudatta, svarita), phonetics, and traditional sandhi rules of the oldest Vedic mantras.',
+        video_url: 'https://www.youtube.com/embed/dQw4w9WgXcQ'
       }
     ];
     for (const c of initialClasses) {
       await dbRun(
-        "INSERT INTO classes (id, title, instructor_name, time, fee, image, description) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [c.id, c.title, c.instructor_name, c.time, c.fee, c.image, c.description]
+        "INSERT INTO classes (id, title, instructor_name, time, fee, image, description, video_url, status, proposer_name, proposer_location) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [c.id, c.title, c.instructor_name, c.time, c.fee, c.image, c.description, c.video_url || null, 'approved', c.instructor_name, 'Hyderabad']
       );
     }
     console.log('✦ Gurukulam Classes seeded successfully.');
 
-    // Seed single priest: Shri Ramakrishna Sharma
+    // Seed vetted priests
     await dbRun("DELETE FROM purohits");
-    const ramakrishna = {
-      id: 'purohit-ramakrishna',
-      name: 'Shri Ramakrishna Sharma',
-      specialization: 'Maha Chandi Homam, Rigveda Recitation, Griha Pravesham, Vivaha Mahotsavam',
-      rating: 5.0,
-      fee: 2500,
-      image: '/images/vedic_acharya.png',
-      location: 'Hyderabad',
-      bookings_count: 42,
-      bio: 'Reverend Rigvedic Acharya Shri Ramakrishna Sharma has over 25 years of experience in performing sacred Vedic rituals, homams, and educational classes. Trained at the traditional Veda Pathashala in Tirupati, he specializes in Griha Pravesham, Maha Chandi Homas, and Vedic Weddings.',
-      credentials: 'Gold Medalist in Rigvedic Studies, Tirumala Veda Pathashala; Certified Purohit by Vaidika Acharya Peetham.',
-      portfolio_images: JSON.stringify([
-        '/images/vedic_acharya.png',
-        '/images/products/pasupu.png',
-        '/images/products/vibhuti.png'
-      ]),
-      email: 'priest@gurupadukam.com',
-      phone: '+919876543210',
-      gov_id_type: 'Aadhaar Card',
-      gov_id_number: '1234-5678-9012',
-      gov_id_image: '/images/auth/aadhaar_mock.png'
-    };
+    
+    const seededPurohits = [
+      {
+        id: 'acharya_1',
+        name: 'Shri Ramakrishna Sharma',
+        specialization: 'Maha Chandi Homam, Rigveda Recitation, Griha Pravesham, Vivaha Mahotsavam',
+        rating: 5.0,
+        fee: 2500,
+        image: '/images/vedic_acharya.png',
+        location: 'Hyderabad',
+        bookings_count: 42,
+        bio: 'Reverend Rigvedic Acharya Shri Ramakrishna Sharma has over 25 years of experience in performing sacred Vedic rituals, homams, and educational classes. Trained at the traditional Veda Pathashala in Tirupati, he specializes in Griha Pravesham, Maha Chandi Homas, and Vedic Weddings.',
+        credentials: 'Gold Medalist in Rigvedic Studies, Tirumala Veda Pathashala; Certified Purohit by Vaidika Acharya Peetham.',
+        portfolio_images: JSON.stringify(['/images/vedic_acharya.png', '/images/products/pasupu.png', '/images/products/vibhuti.png']),
+        email: 'priest@gurupadukam.com',
+        phone: '+919876543210',
+        gov_id_type: 'Aadhaar Card',
+        gov_id_number: '1234-5678-9012',
+        gov_id_image: '/images/auth/aadhaar_mock.png'
+      },
+      {
+        id: 'acharya_2',
+        name: 'Shri Dwivedi Shastri Acharya',
+        specialization: 'Yajurveda, Rigveda Recitation & Karma Kanda',
+        rating: 4.9,
+        fee: 3000,
+        image: '/images/vedic_acharya.png',
+        location: 'Hyderabad',
+        bookings_count: 145,
+        bio: 'Shri Dwivedi Shastri is a revered Vedic scholar with over 20 years of experience teaching recitation at traditional Veda Pathashalas. He specializes in Upanishad chanting and temple worship protocols.',
+        credentials: 'M.A. in Sanskrit, Gold Medalist, Varanasi Veda Sabha',
+        portfolio_images: JSON.stringify([]),
+        email: 'dwivedi@gurupadukam.com',
+        phone: '+919876543211',
+        gov_id_type: 'Aadhaar Card',
+        gov_id_number: '1234-5678-9013',
+        gov_id_image: '/images/auth/aadhaar_mock.png'
+      },
+      {
+        id: 'acharya_3',
+        name: 'Shri Sharma Shastri',
+        specialization: 'Vyakarna, Sanskrit Literature & Upanishads',
+        rating: 4.8,
+        fee: 3500,
+        image: '/images/vedic_acharya.png',
+        location: 'Bengaluru',
+        bookings_count: 98,
+        bio: 'Shri Sharma Shastri is an expert in Sanskrit grammar and classical Upanishadic commentaries. He has trained hundreds of students in the traditional Gurukulam method.',
+        credentials: 'Sanskrit Shiromani, Tirupati Sanskrit Vidyapeeth',
+        portfolio_images: JSON.stringify([]),
+        email: 'shastri@gurupadukam.com',
+        phone: '+919876543212',
+        gov_id_type: 'Aadhaar Card',
+        gov_id_number: '1234-5678-9014',
+        gov_id_image: '/images/auth/aadhaar_mock.png'
+      },
+      {
+        id: 'acharya_4',
+        name: 'Shri Acharya Ramulu',
+        specialization: 'Sanskrit Chanting, Bhagavad Gita & Astro-sciences',
+        rating: 5.0,
+        fee: 2800,
+        image: '/images/vedic_acharya.png',
+        location: 'Chennai',
+        bookings_count: 210,
+        bio: 'Shri Acharya Ramulu teaches Sanskrit chanting and Gita application in daily life. His sessions focus on precise pronunciation and phonetics.',
+        credentials: 'Veda Vibhushana, Andhra Pradesh Veda Peetam',
+        portfolio_images: JSON.stringify([]),
+        email: 'ramulu@gurupadukam.com',
+        phone: '+919876543213',
+        gov_id_type: 'Aadhaar Card',
+        gov_id_number: '1234-5678-9015',
+        gov_id_image: '/images/auth/aadhaar_mock.png'
+      },
+      {
+        id: 'acharya_5',
+        name: 'Shri Srinivasa Acharya',
+        specialization: 'Agama Shastras, Temple Pujas & Prabandha Chanting',
+        rating: 4.9,
+        fee: 3200,
+        image: '/images/vedic_acharya.png',
+        location: 'Hyderabad',
+        bookings_count: 167,
+        bio: 'Shri Srinivasa Acharya is an expert in temple liturgy and Dravida Veda chanting. He specializes in Vaishnava rituals and festival coordination.',
+        credentials: 'Pancharatra Agama Praveena, Srirangam Pathashala',
+        portfolio_images: JSON.stringify([]),
+        email: 'srinivasa@gurupadukam.com',
+        phone: '+919876543214',
+        gov_id_type: 'Aadhaar Card',
+        gov_id_number: '1234-5678-9016',
+        gov_id_image: '/images/auth/aadhaar_mock.png'
+      }
+    ];
 
-    await dbRun(
-      `INSERT INTO purohits (id, name, specialization, rating, fee, image, location, bookings_count, bio, credentials, portfolio_images, email, phone, gov_id_type, gov_id_number, gov_id_image)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        ramakrishna.id,
-        ramakrishna.name,
-        ramakrishna.specialization,
-        ramakrishna.rating,
-        ramakrishna.fee,
-        ramakrishna.image,
-        ramakrishna.location,
-        ramakrishna.bookings_count,
-        ramakrishna.bio,
-        ramakrishna.credentials,
-        ramakrishna.portfolio_images,
-        ramakrishna.email,
-        ramakrishna.phone,
-        ramakrishna.gov_id_type,
-        ramakrishna.gov_id_number,
-        ramakrishna.gov_id_image
-      ]
-    );
-    console.log('✦ Vetted Purohit seeded successfully: Shri Ramakrishna Sharma.');
+    for (const p of seededPurohits) {
+      await dbRun(
+        `INSERT INTO purohits (id, name, specialization, rating, fee, image, location, bookings_count, bio, credentials, portfolio_images, email, phone, gov_id_type, gov_id_number, gov_id_image)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [p.id, p.name, p.specialization, p.rating, p.fee, p.image, p.location, p.bookings_count, p.bio, p.credentials, p.portfolio_images, p.email, p.phone, p.gov_id_type, p.gov_id_number, p.gov_id_image]
+      );
+    }
+    console.log('✦ Seeded 5 Vetted Priests in purohits table.');
 
     // Seeding Satsang Queries
     const queryCount = await dbGet("SELECT COUNT(*) as count FROM queries");

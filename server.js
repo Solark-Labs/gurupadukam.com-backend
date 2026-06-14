@@ -2500,7 +2500,64 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
       await triggerOrderPlacedNotification(orderId, customerName, customerEmail, customerPhone, shippingAddress, cartItems, total, paymentMethod);
     }
 
-    res.status(201).json({ message: 'Order completed and inventory deducted.', order: completeOrder });
+    // Auto-save user's latest checkout address book location & phone coordinate
+    let updatedUser = null;
+    try {
+      const userObj = await dbGet("SELECT location, phone FROM users WHERE id = ?", [req.user.id]);
+      let addressesList = [];
+      let avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(customerName)}&background=5C0A20&color=FDE68A&size=200&font-size=0.4&bold=true`;
+      
+      if (userObj && userObj.location) {
+        try {
+          const parsed = JSON.parse(userObj.location);
+          if (parsed.addresses && Array.isArray(parsed.addresses)) {
+            addressesList = parsed.addresses;
+          } else if (parsed.address) {
+            addressesList = [{ id: 'addr-default', street: parsed.address, city: '', state: '', pincode: '', isDefault: true }];
+          }
+          if (parsed.avatar) {
+            avatarUrl = parsed.avatar;
+          }
+        } catch (e) {
+          addressesList = [{ id: 'addr-default', street: userObj.location, city: '', state: '', pincode: '', isDefault: true }];
+        }
+      }
+
+      const newAddrStr = `${shippingAddress.street || ''}, ${shippingAddress.city || ''}, ${shippingAddress.state || ''} - ${shippingAddress.pin_code || shippingAddress.pincode || ''}`.toLowerCase().replace(/\s+/g, '');
+      const exists = addressesList.some(addr => {
+        const addrStr = `${addr.street || ''}, ${addr.city || ''}, ${addr.state || ''} - ${addr.pincode || ''}`.toLowerCase().replace(/\s+/g, '');
+        return addrStr === newAddrStr;
+      });
+
+      if (!exists) {
+        addressesList = addressesList.map(a => ({ ...a, isDefault: false }));
+        addressesList.push({
+          id: 'addr-' + Math.random().toString(36).substr(2, 9),
+          street: shippingAddress.street || '',
+          city: shippingAddress.city || '',
+          state: shippingAddress.state || '',
+          pincode: shippingAddress.pin_code || shippingAddress.pincode || '',
+          isDefault: true
+        });
+      }
+
+      const serializedLocation = JSON.stringify({
+        address: shippingAddress.street || '',
+        addresses: addressesList,
+        avatar: avatarUrl
+      });
+
+      await dbRun("UPDATE users SET location = ?, phone = ? WHERE id = ?", [serializedLocation, customerPhone, req.user.id]);
+      updatedUser = await dbGet("SELECT id, name, email, role, location, phone, is_blocked FROM users WHERE id = ?", [req.user.id]);
+    } catch (updateErr) {
+      console.error('[User Location Auto-Save Error]:', updateErr.message);
+    }
+
+    res.status(201).json({ 
+      message: 'Order completed and inventory deducted.', 
+      order: completeOrder, 
+      updatedUser: updatedUser || undefined 
+    });
   } catch (err) {
     res.status(500).json({ error: 'Internal Error', message: err.message });
   }
@@ -3129,7 +3186,7 @@ app.get('/api/classes', async (req, res) => {
 });
 
 app.post('/api/classes', authenticateToken, requireAdminOrSuperOrPurohit, async (req, res) => {
-  const { title, instructor_name, time, fee, image, description } = req.body;
+  const { title, instructor_name, time, fee, image, description, video_url } = req.body;
   if (!title || !instructor_name || !time || fee === undefined || !image || !description) {
     return res.status(400).json({ error: 'Bad Request', message: 'All class details are required.' });
   }
@@ -3138,8 +3195,8 @@ app.post('/api/classes', authenticateToken, requireAdminOrSuperOrPurohit, async 
     const status = req.user.role === 'super_admin' ? 'approved' : 'pending';
     
     await dbRun(
-      "INSERT INTO classes (id, title, instructor_name, time, fee, image, description, status, proposer_name, proposer_location) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      [classId, title, instructor_name, time, Number(fee), image, description, status, req.user.name, req.user.location || 'Hub Location']
+      "INSERT INTO classes (id, title, instructor_name, time, fee, image, description, status, proposer_name, proposer_location, video_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [classId, title, instructor_name, time, Number(fee), image, description, status, req.user.name, req.user.location || 'Hub Location', video_url || null]
     );
 
     res.status(201).json({ 
@@ -3349,7 +3406,7 @@ app.post('/api/admin/classes/:id/unapprove', authenticateToken, requireSuperAdmi
 // Proposer/Admin edit sessional cohort coordinates
 app.put('/api/classes/:id', authenticateToken, requireAdminOrSuperOrPurohit, async (req, res) => {
   const classId = req.params.id;
-  const { title, instructor_name, time, fee, image, description } = req.body;
+  const { title, instructor_name, time, fee, image, description, video_url } = req.body;
   
   if (!title || !instructor_name || !time || fee === undefined || !image || !description) {
     return res.status(400).json({ error: 'Bad Request', message: 'All class details are required.' });
@@ -3369,9 +3426,9 @@ app.put('/api/classes/:id', authenticateToken, requireAdminOrSuperOrPurohit, asy
 
     await dbRun(
       `UPDATE classes 
-       SET title = ?, instructor_name = ?, time = ?, fee = ?, image = ?, description = ?, status = ?, proposer_name = ?
+       SET title = ?, instructor_name = ?, time = ?, fee = ?, image = ?, description = ?, status = ?, proposer_name = ?, video_url = ?
        WHERE id = ?`,
-      [title, instructor_name, time, Number(fee), image, description, newStatus, req.user.name, classId]
+      [title, instructor_name, time, Number(fee), image, description, newStatus, req.user.name, video_url || null, classId]
     );
 
     res.json({
@@ -3418,7 +3475,7 @@ app.get('/api/events', async (req, res) => {
 });
 
 app.post('/api/events', authenticateToken, async (req, res) => {
-  const { title, category, description, date_time, location, organizer_name } = req.body;
+  const { title, category, description, date_time, location, organizer_name, image } = req.body;
   if (!title || !category || !description || !date_time || !location || !organizer_name) {
     return res.status(400).json({ error: 'Bad Request', message: 'All event details are required.' });
   }
@@ -3427,12 +3484,12 @@ app.post('/api/events', authenticateToken, async (req, res) => {
     const status = req.user.role === 'super_admin' ? 'approved' : 'pending';
     
     await dbRun(
-      "INSERT INTO events (id, title, category, description, date_time, location, organizer_name, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      [eventId, title, category, description, date_time, location, organizer_name, status]
+      "INSERT INTO events (id, title, category, description, date_time, location, organizer_name, status, image) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [eventId, title, category, description, date_time, location, organizer_name, status, image || null]
     );
 
     if (status === 'approved') {
-      triggerEventApprovedNotifications({ id: eventId, title, category, description, date_time, location, organizer_name });
+      triggerEventApprovedNotifications({ id: eventId, title, category, description, date_time, location, organizer_name, image: image || null });
     }
 
     res.status(201).json({
@@ -3497,34 +3554,59 @@ async function triggerEventApprovedNotifications(event) {
     const devotees = await dbQuery("SELECT name, email, phone FROM users WHERE role = 'user'");
     for (const devotee of devotees) {
       if (devotee.email) {
-        const emailSubject = `✦ Sacred Invitation: Live Event – ${event.title} 🌿`;
+        const emailSubject = `✦ Divine Invitation: Special Satsang Live Event – ${event.title} 🌿`;
+        
+        let bannerHtml = '';
+        if (event.image) {
+          bannerHtml = `
+            <div style="text-align: center; margin: 15px 0 25px 0;">
+              <img src="${event.image}" alt="${event.title}" style="max-width: 100%; border-radius: 12px; border: 2px solid #C9943A; box-shadow: 0 8px 20px rgba(92,10,32,0.15); object-fit: cover; max-height: 280px;" />
+            </div>
+          `;
+        }
+
         const emailBody = `
-          <div style="font-family: Arial, sans-serif; padding: 25px; border: 2px solid #C9943A; border-radius: 12px; max-width: 600px; background-color: #FCFBF8; margin: auto;">
-            <img src="https://gurupadukam.com/gurupadukam_logo.png" alt="Gurupadukam Logo" style="display: block; margin: 0 auto 15px auto; width: 70px; height: 70px; border-radius: 50%; border: 2px solid #C9943A;" />
-            <h2 style="color: #5C0A20; text-align: center; border-bottom: 2px solid #C9943A; padding-bottom: 12px; margin-top: 0; font-family: 'Cinzel', Georgia, serif; font-size: 20px;">gurupadukam.com</h2>
-            <p style="font-size: 15px; color: #1A1A1A; font-weight: bold;">Hari Om, ${devotee.name} ji!</p>
-            <p style="font-size: 13px; color: #333; line-height: 1.5;">We are pleased to invite you to a sacred live gathering at Gurupadukam:</p>
-            
-            <div style="margin: 20px 0; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 15px; font-size: 12px; line-height: 1.6;">
-              <strong style="color: #5C0A20; font-size: 13px; display: block; border-bottom: 1px solid #eee; padding-bottom: 5px; margin-bottom: 8px;">Event Details:</strong>
-              <strong>Event:</strong> ${event.title}<br>
-              <strong>Category:</strong> ${event.category}<br>
-              <strong>Date & Time:</strong> ${event.date_time}<br>
-              <strong>Venue / Link:</strong> ${event.location}<br>
-              <strong>Organized by:</strong> ${event.organizer_name}<br>
-              <strong>Description:</strong> ${event.description}
+          <div style="font-family: 'Georgia', serif; padding: 35px; border: 3px double #C9943A; border-radius: 16px; max-width: 600px; background-color: #FCFBF8; margin: auto; box-shadow: 0 10px 30px rgba(0,0,0,0.05);">
+            <div style="text-align: center; border-bottom: 2px solid #C9943A; padding-bottom: 20px; margin-bottom: 25px;">
+              <img src="https://gurupadukam.com/gurupadukam_logo.png" alt="Gurupadukam Logo" style="display: block; margin: 0 auto 10px auto; width: 80px; height: 80px; border-radius: 50%; border: 2px solid #C9943A; background-color: #fff;" />
+              <h2 style="color: #5C0A20; font-family: 'Cinzel', Georgia, serif; font-size: 24px; letter-spacing: 3px; margin: 0; text-transform: uppercase;">gurupadukam.com</h2>
+              <span style="font-size: 10px; color: #C9943A; letter-spacing: 2px; text-transform: uppercase; font-weight: bold; display: block; margin-top: 5px;">✦ Sourcing Vedic Purity & Wisdom ✦</span>
             </div>
 
-            <p style="font-size: 13px; color: #333; line-height: 1.5;">Join us to experience scriptural wisdom, divine vibes, and community bonding. Please save this date in your calendar.</p>
-            <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
-            <p style="font-size: 11px; color: #777; text-align: center; font-style: italic;">"Satsangatve Nissangatvam, Nissangatve Nirmohatvam."</p>
-            <p style="font-size: 9px; color: #999; text-align: center; margin-top: 10px;">© gurupadukam.com. All rights reserved.</p>
+            <p style="font-size: 16px; color: #1A1A1A; font-weight: bold; margin-bottom: 15px; text-align: left;">Hari Om, ${devotee.name} ji!</p>
+            <p style="font-size: 14px; color: #333; line-height: 1.6; text-align: left; font-family: 'Segoe UI', Arial, sans-serif;">
+              We are absolutely thrilled to extend a sacred invitation to a special live gathering at Gurupadukam. Our scholarly Acharyas are hosting this auspicious event to share scriptural wisdom, perform divine rituals, and answer devotee questions:
+            </p>
+            
+            ${bannerHtml}
+
+            <div style="margin: 25px 0; background: #FFFDF9; border: 1.5px solid #C9943A; border-radius: 12px; padding: 20px; font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px; line-height: 1.8; text-align: left; box-shadow: inset 0 2px 8px rgba(201,148,58,0.05);">
+              <strong style="color: #5C0A20; font-size: 15px; display: block; border-bottom: 1px dashed #C9943A; padding-bottom: 8px; margin-bottom: 12px; font-family: 'Cinzel', Georgia, serif; text-transform: uppercase; letter-spacing: 1px;">Event Details:</strong>
+              <strong>🕉️ Special Event:</strong> <span style="color: #5C0A20; font-weight: bold;">${event.title}</span><br>
+              <strong>🏷️ Category:</strong> ${event.category}<br>
+              <strong>📅 Date & Time:</strong> ${event.date_time}<br>
+              <strong>📍 Venue / Access Link:</strong> <a href="${event.location.startsWith('http') ? event.location : 'https://gurupadukam.com/satsang'}" style="color: #C9943A; font-weight: bold; text-decoration: underline;">${event.location}</a><br>
+              <strong>🎙️ Organized by:</strong> ${event.organizer_name}<br>
+              <strong>✨ Divine Purpose:</strong> ${event.description}
+            </div>
+
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="https://gurupadukam.com/satsang" style="background-color: #5C0A20; color: #FCFBF8; padding: 14px 35px; text-decoration: none; font-weight: bold; border-radius: 8px; font-size: 14px; display: inline-block; border: 1px solid #C9943A; font-family: 'Cinzel', Georgia, serif; letter-spacing: 1px; box-shadow: 0 4px 12px rgba(92,10,32,0.25);">Participate in Satsang</a>
+            </div>
+
+            <p style="font-size: 13px; color: #444; line-height: 1.6; text-align: center; font-style: italic; font-family: 'Segoe UI', Arial, sans-serif;">
+              Join us to experience scriptural enlightenment, elevate your spiritual energy, and interact directly with scholarly Acharyas. Please save this date in your calendar!
+            </p>
+            
+            <hr style="border: 0; border-top: 1px dashed #C9943A; margin: 25px 0;" />
+            <p style="font-size: 12px; color: #5C0A20; text-align: center; font-style: italic; font-weight: bold;">"Satsangatve Nissangatvam, Nissangatve Nirmohatvam."</p>
+            <p style="font-size: 9px; color: #999; text-align: center; margin-top: 15px; font-family: 'Segoe UI', Arial, sans-serif;">© gurupadukam.com. All rights reserved.</p>
           </div>
         `;
         sendEmailNotification(devotee.email, emailSubject, emailBody);
       }
       if (devotee.phone) {
-        sendSMSNotification(devotee.phone, `Hari Om! New Live Event scheduled: ${event.title} (${event.category}) on ${event.date_time}. Join us at ${event.location} ✦`);
+        sendSMSNotification(devotee.phone, `Hari Om! Special Event scheduled: ${event.title} (${event.category}) on ${event.date_time}. Join live at ${event.location} ✦`);
       }
     }
   } catch (err) {
@@ -3589,9 +3671,12 @@ app.get('/api/purohits/:id', async (req, res) => {
       responseProfile.email = undefined;
     }
 
+    const classes = await dbQuery("SELECT * FROM classes WHERE LOWER(instructor_name) = LOWER(?) AND status = 'approved'", [purohit.name]);
+
     res.json({
       purohit: responseProfile,
       reviews,
+      classes,
       hasBooked
     });
   } catch (err) {
