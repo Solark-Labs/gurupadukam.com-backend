@@ -1117,6 +1117,26 @@ app.post('/api/auth/email-login/send', async (req, res) => {
     return res.status(400).json({ error: 'Bad Request', message: 'Valid email address required.' });
   }
 
+  try {
+    const user = await dbGet("SELECT * FROM users WHERE email = ?", [email]);
+    if (!user) {
+      return res.status(404).json({ error: 'Not Found', message: 'No account registered with this email address. Please register a new account first. ✦' });
+    }
+    if (user.role !== 'user') {
+      let roleLabel = 'Devotee';
+      if (user.role === 'purohit') roleLabel = 'Acharya';
+      else if (user.role === 'admin' || user.role === 'super_admin') roleLabel = 'Admin';
+      else if (user.role === 'cottage_partner') roleLabel = 'Artisan';
+      return res.status(400).json({
+        error: 'Invalid Portal Desk',
+        message: `Your account is registered as an ${roleLabel}. Please select the ${roleLabel} portal desk above and sign in with your secure password. ✦`,
+        role: user.role
+      });
+    }
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+
   const code = Math.floor(100000 + Math.random() * 900000).toString();
   otpStore[email] = { code, expiresAt: Date.now() + 5 * 60 * 1000 };
 
@@ -1195,8 +1215,21 @@ app.post('/api/auth/otp/send', async (req, res) => {
     if (purpose === 'reset' && !existing) {
       return res.status(404).json({ error: 'Not Found', message: 'No account registered with this mobile number. Please check or sign up. ✦' });
     }
-    if (purpose === 'login' && !existing) {
-      return res.status(404).json({ error: 'Not Found', message: 'No account registered with this mobile number. Please sign up first. ✦' });
+    if (purpose === 'login') {
+      if (!existing) {
+        return res.status(404).json({ error: 'Not Found', message: 'No account registered with this mobile number. Please sign up first. ✦' });
+      }
+      if (existing.role !== 'user') {
+        let roleLabel = 'Devotee';
+        if (existing.role === 'purohit') roleLabel = 'Acharya';
+        else if (existing.role === 'admin' || existing.role === 'super_admin') roleLabel = 'Admin';
+        else if (existing.role === 'cottage_partner') roleLabel = 'Artisan';
+        return res.status(400).json({
+          error: 'Invalid Portal Desk',
+          message: `Your account is registered as an ${roleLabel}. Please select the ${roleLabel} portal desk above and sign in with your secure password. ✦`,
+          role: existing.role
+        });
+      }
     }
   } catch (err) {
     console.error(`[OTP Send Validate Error]:`, err.message);
