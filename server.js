@@ -767,7 +767,7 @@ app.post('/api-proxy', async (req, res) => {
 // --- 1. Authenticaton APIs ---
 
 app.post('/api/auth/register', async (req, res) => {
-  const { name, email, password, phone, role, location, specialization, fee, image, cottageCategory, cottageAddress, cottageCapacity, otp, emailCode, firebaseToken, bio, credentials, portfolioImages, govIdType, govIdNumber, govIdImage } = req.body;
+  const { name, email, password, phone, role, location, specialization, fee, image, cottageCategory, cottageAddress, cottageCapacity, otp, emailCode, firebaseToken, bio, credentials, portfolioImages, govIdType, govIdNumber, govIdImage, transactionId } = req.body;
   if (!name || !email || !password || !phone) {
     return res.status(400).json({ error: 'Bad Request', message: 'Name, email, password, and mobile number are required.' });
   }
@@ -789,43 +789,41 @@ app.post('/api/auth/register', async (req, res) => {
 
     let targetRole = role || 'user';
 
-    // Devotee registration (role === 'user' or targetRole === 'user') strictly requires phone OTP or email OTP verification
-    if (targetRole === 'user') {
-      if (firebaseToken) {
-        // Verify via secure Firebase ID Token
-        try {
-          const decoded = await verifyFirebaseIdToken(firebaseToken);
-          const decodedPhone = decoded.phone_number;
-          if (!decodedPhone) {
-            return res.status(400).json({ error: 'Verification Failed', message: 'Token does not contain a verified mobile number.' });
-          }
-          const cleanDecodedPhone = normalizePhone(decodedPhone);
-          if (cleanDecodedPhone !== cleanPhone) {
-            return res.status(400).json({ error: 'Verification Failed', message: 'The verified phone number does not match your inputted mobile coordinates.' });
-          }
-        } catch (err) {
-          return res.status(400).json({ error: 'Verification Failed', message: err.message || 'Firebase phone authentication token validation failed.' });
+    // Enforce email/phone verification for all registration roles
+    if (firebaseToken) {
+      // Verify via secure Firebase ID Token
+      try {
+        const decoded = await verifyFirebaseIdToken(firebaseToken);
+        const decodedPhone = decoded.phone_number;
+        if (!decodedPhone) {
+          return res.status(400).json({ error: 'Verification Failed', message: 'Token does not contain a verified mobile number.' });
         }
-      } else if (emailCode) {
-        // Verify via Email OTP (Cost-Free!)
-        const record = otpStore[email];
-        if (!record || record.code !== emailCode || record.expiresAt < Date.now()) {
-          return res.status(400).json({ error: 'Verification Failed', message: 'Invalid or expired Email verification code.' });
+        const cleanDecodedPhone = normalizePhone(decodedPhone);
+        if (cleanDecodedPhone !== cleanPhone) {
+          return res.status(400).json({ error: 'Verification Failed', message: 'The verified phone number does not match your inputted mobile coordinates.' });
         }
-        delete otpStore[email];
-      } else if (otp) {
-        // Verify via Phone SMS OTP
-        if (!cleanPhone || cleanPhone.length < 10) {
-          return res.status(400).json({ error: 'Bad Request', message: 'A valid 10-digit mobile number is required for devotee registration.' });
-        }
-        const record = otpStore[cleanPhone];
-        if (!record || record.code !== otp || record.expiresAt < Date.now()) {
-          return res.status(400).json({ error: 'Verification Failed', message: 'Invalid or expired Phone SMS OTP.' });
-        }
-        delete otpStore[cleanPhone];
-      } else {
-        return res.status(400).json({ error: 'Bad Request', message: 'Please provide either the Email verification code, Phone SMS OTP, or a secure Firebase ID Token to complete registration.' });
+      } catch (err) {
+        return res.status(400).json({ error: 'Verification Failed', message: err.message || 'Firebase phone authentication token validation failed.' });
       }
+    } else if (emailCode) {
+      // Verify via Email OTP (Cost-Free!)
+      const record = otpStore[email];
+      if (!record || record.code !== emailCode || record.expiresAt < Date.now()) {
+        return res.status(400).json({ error: 'Verification Failed', message: 'Invalid or expired Email verification code.' });
+      }
+      delete otpStore[email];
+    } else if (otp) {
+      // Verify via Phone SMS OTP
+      if (!cleanPhone || cleanPhone.length < 10) {
+        return res.status(400).json({ error: 'Bad Request', message: 'A valid 10-digit mobile number is required for registration.' });
+      }
+      const record = otpStore[cleanPhone];
+      if (!record || record.code !== otp || record.expiresAt < Date.now()) {
+        return res.status(400).json({ error: 'Verification Failed', message: 'Invalid or expired Phone SMS OTP.' });
+      }
+      delete otpStore[cleanPhone];
+    } else {
+      return res.status(400).json({ error: 'Bad Request', message: 'Please provide either the Email verification code, Phone SMS OTP, or a secure Firebase ID Token to complete registration.' });
     }
 
     const userId = 'usr-' + Math.random().toString(36).substr(2, 9);
@@ -837,7 +835,7 @@ app.post('/api/auth/register', async (req, res) => {
     if (role === 'purohit') {
       targetRole = 'purohit';
       targetLocation = location || 'Hyderabad';
-      isBlocked = 0; // Auto-approved and active!
+      isBlocked = 1; // Pending payment & credentials verification
       
       // Enforce up to 3 portfolio images
       let portfolioImagesJson = '[]';
@@ -859,6 +857,13 @@ app.post('/api/auth/register', async (req, res) => {
          VALUES (?, ?, ?, 5.0, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [userId, name, specialization || 'Vedic Homams', fee ? Number(fee) : 3500, image || '/images/vedic_acharya.png', targetLocation, bio || '', credentials || '', portfolioImagesJson, email, cleanPhone, govIdType || 'Aadhaar Card', govIdNumber || '', govIdImage || '/images/auth/aadhaar_mock.png']
       );
+
+      // Insert registration payment record
+      const paymentId = 'pay-' + Math.random().toString(36).substr(2, 9);
+      await dbRun(`
+        INSERT INTO registration_payments (id, user_id, user_name, user_email, amount, transaction_id, payment_status)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `, [paymentId, userId, name, email, 11.0, transactionId || 'N/A', 'pending']);
     } else if (role === 'admin') {
       targetRole = 'admin';
       targetLocation = location || 'Hyderabad';
@@ -2756,6 +2761,90 @@ app.put('/api/admin/users/:id/role', authenticateToken, requireSuperAdmin, async
   }
 });
 
+// --- Settings & Hubs Admin Config APIs ---
+app.get('/api/admin/settings', authenticateToken, requireAdminOrSuper, async (req, res) => {
+  try {
+    const rows = await dbQuery("SELECT * FROM settings");
+    const settings = {};
+    rows.forEach(r => {
+      settings[r.key] = r.value;
+    });
+    res.json(settings);
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
+app.post('/api/admin/settings', authenticateToken, requireAdminOrSuper, async (req, res) => {
+  const settings = req.body;
+  try {
+    for (const [key, value] of Object.entries(settings)) {
+      const existing = await dbGet("SELECT * FROM settings WHERE key = ?", [key]);
+      if (existing) {
+        await dbRun("UPDATE settings SET value = ? WHERE key = ?", [String(value), key]);
+      } else {
+        await dbRun("INSERT INTO settings (key, value) VALUES (?, ?)", [key, String(value)]);
+      }
+    }
+    res.json({ message: 'Settings updated successfully.' });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
+app.get('/api/admin/hubs', authenticateToken, requireAdminOrSuper, async (req, res) => {
+  try {
+    const hubs = await dbQuery("SELECT * FROM hubs");
+    res.json(hubs);
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
+app.post('/api/admin/hubs', authenticateToken, requireAdminOrSuper, async (req, res) => {
+  const { name, hours, coverage, license } = req.body;
+  if (!name) {
+    return res.status(400).json({ error: 'Bad Request', message: 'Hub name is required.' });
+  }
+  const id = `hub-${Date.now()}`;
+  try {
+    await dbRun("INSERT INTO hubs (id, name, hours, coverage, license) VALUES (?, ?, ?, ?, ?)", [id, name, hours || '', coverage || '', license || '']);
+    res.json({ message: 'Hub added successfully.', id });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
+app.put('/api/admin/hubs/:id', authenticateToken, requireAdminOrSuper, async (req, res) => {
+  const { name, hours, coverage, license } = req.body;
+  if (!name) {
+    return res.status(400).json({ error: 'Bad Request', message: 'Hub name is required.' });
+  }
+  try {
+    const existing = await dbGet("SELECT * FROM hubs WHERE id = ?", [req.params.id]);
+    if (!existing) {
+      return res.status(404).json({ error: 'Not Found', message: 'Hub not found.' });
+    }
+    await dbRun("UPDATE hubs SET name = ?, hours = ?, coverage = ?, license = ? WHERE id = ?", [name, hours || '', coverage || '', license || '', req.params.id]);
+    res.json({ message: 'Hub updated successfully.' });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
+app.delete('/api/admin/hubs/:id', authenticateToken, requireAdminOrSuper, async (req, res) => {
+  try {
+    const existing = await dbGet("SELECT * FROM hubs WHERE id = ?", [req.params.id]);
+    if (!existing) {
+      return res.status(404).json({ error: 'Not Found', message: 'Hub not found.' });
+    }
+    await dbRun("DELETE FROM hubs WHERE id = ?", [req.params.id]);
+    res.json({ message: 'Hub deleted successfully.' });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
 
 // --- 7. Gurukulam Classes APIs ---
 // --- 7. Gurukulam Classes APIs & Session Proposals ---
@@ -4296,7 +4385,7 @@ app.use((req, res, next) => {
   }
   
   if (fs.existsSync(path.join(frontendDistPath, 'index.html'))) {
-    res.sendFile(path.join(frontendDistPath, 'index.html'));
+    res.sendFile(path.join(frontendDistPath, 'index.html'), { dotfiles: 'allow' });
   } else {
     // Elegant API home response suitable for our hybrid plan!
     res.setHeader('Content-Type', 'text/html');
