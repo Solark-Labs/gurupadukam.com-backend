@@ -36,7 +36,7 @@ export const requireRole = (allowedRoles) => {
 export const requireSuperAdmin = requireRole(['super_admin']);
 export const requireAdminOrSuper = requireRole(['admin', 'super_admin']);
 export const generateToken = (userPayload) => {
-  return jwt.sign(userPayload, JWT_SECRET, { expiresIn: '30d' });
+  return jwt.sign(userPayload, JWT_SECRET, { expiresIn: '24h' });
 };
 export { JWT_SECRET };
 

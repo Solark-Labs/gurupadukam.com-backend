@@ -418,6 +418,41 @@ async function sendWhatsAppNotification(to, bodyText) {
   }
 }
 
+// Unified Notification Dispatcher orchestrating preferred user communication channels
+async function dispatchNotificationToUser(user, subject, textMsg, htmlMsg, attachments = []) {
+  if (!user) return;
+  const email = user.email;
+  const phone = user.phone;
+
+  let prefs = { email: true, whatsapp: true, sms: false };
+  if (user.communication_preferences) {
+    try {
+      if (typeof user.communication_preferences === 'string') {
+        prefs = JSON.parse(user.communication_preferences);
+      } else {
+        prefs = user.communication_preferences;
+      }
+    } catch (e) {
+      console.error("[Notification Pref Error]", e);
+    }
+  }
+
+  // 1. Send Email Notification
+  if (prefs.email && email) {
+    await sendEmailNotification(email, subject, htmlMsg, attachments);
+  }
+
+  // 2. Send Twilio WhatsApp Alert
+  if (prefs.whatsapp && phone) {
+    await sendWhatsAppNotification(phone, textMsg);
+  }
+
+  // 3. Send Twilio SMS Alert
+  if (prefs.sms && phone) {
+    await sendSMSNotification(phone, textMsg);
+  }
+}
+
 // Base32 Alphabet and cryptographic helpers for cost-free TOTP verification
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
@@ -1240,8 +1275,9 @@ app.post('/api/auth/otp/send', async (req, res) => {
   otpStore[cleanPhone] = { code, expiresAt: Date.now() + 5 * 60 * 1000 };
 
   console.log(`[SMS Service] Secure OTP ${code} dispatched to phone ${cleanPhone}`);
-  const messageText = code;
+  const messageText = `Hari Om! Your Gurupadukam OTP verification code is: ${code}. Valid for 5 minutes. ✦`;
   const smsSent = await sendSMSNotification(phone, messageText);
+  await sendWhatsAppNotification(phone, messageText);
 
   const isMock = !smsSent || (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN || !process.env.TWILIO_PHONE_NUMBER);
   res.json({ 
@@ -1780,6 +1816,58 @@ app.post('/api/auth/profile/apply-purohit', authenticateToken, async (req, res) 
       INSERT INTO registration_payments (id, user_id, user_name, user_email, amount, transaction_id, payment_status)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `, [paymentId, req.user.id, user.name, cleanEmail, 11.0, transactionId || 'N/A', 'pending']);
+
+    // Send notifications to Admin and Devotee
+    try {
+      // 1. Alert Super-Admin
+      const adminEmail = 'care.gurupadukam@gmail.com';
+      const adminSubject = `✦ Alert: New Acharya Registration Pending Verification – Gurupadukam 🌿`;
+      const adminHtml = `
+        <div style="font-family: Georgia, serif; padding: 25px; border: 2px solid #C9943A; border-radius: 12px; max-width: 600px; background-color: #FCFBF8; margin: auto;">
+          <h2 style="color: #5C0A20; text-align: center; border-bottom: 2px solid #C9943A; padding-bottom: 12px; margin-top: 0;">gurupadukam.com</h2>
+          <p style="font-size: 15px; color: #1A1A1A; font-weight: bold;">Hari Om, Super-Admin!</p>
+          <p style="font-size: 13px; color: #333; line-height: 1.5;">A new priest has submitted an application to join the Vaidika Acharya Peetham directory. A payment of ₹11 has been initiated. Please verify the transaction details in the Super-Admin panel.</p>
+          
+          <div style="margin: 20px 0; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 15px; font-size: 12px; line-height: 1.6;">
+            <strong style="color: #5C0A20; font-size: 13px; display: block; border-bottom: 1px solid #eee; padding-bottom: 5px; margin-bottom: 8px;">Application Summary:</strong>
+            <strong>Applicant Name:</strong> ${user.name}<br>
+            <strong>Email:</strong> ${cleanEmail}<br>
+            <strong>Phone:</strong> ${cleanPhone}<br>
+            <strong>Specialization:</strong> ${specialization || 'Vedic Homams'}<br>
+            <strong>Dakshina Initiated:</strong> ₹11.00<br>
+            <strong>Transaction ID:</strong> ${transactionId || 'N/A'}
+          </div>
+
+          <div style="text-align: center; margin: 25px 0;">
+            <a href="https://gurupadukam.com/admin" style="background-color: #5C0A20; color: #FCFBF8; padding: 12px 25px; text-decoration: none; font-weight: bold; border-radius: 6px; font-size: 14px; display: inline-block;">Access Admin Dashboard</a>
+          </div>
+        </div>
+      `;
+      sendEmailNotification(adminEmail, adminSubject, adminHtml);
+
+      // 2. Send receipt notification to applying Devotee/Priest
+      const applicantSubject = `✦ Vaidika Acharya Peetham Application Submitted – Gurupadukam 🌿`;
+      const applicantText = `Hari Om ${user.name}! Your Acharya application has been received with Transaction ID: ${transactionId || 'N/A'}. A Super-Admin will verify the ₹11 Dakshina token and approve your account shortly.`;
+      const applicantHtml = `
+        <div style="font-family: Georgia, serif; padding: 25px; border: 2px solid #C9943A; border-radius: 12px; max-width: 600px; background-color: #FCFBF8; margin: auto;">
+          <h2 style="color: #5C0A20; text-align: center; border-bottom: 2px solid #C9943A; padding-bottom: 12px; margin-top: 0;">gurupadukam.com</h2>
+          <p style="font-size: 15px; color: #1A1A1A; font-weight: bold;">Hari Om, ${user.name} ji!</p>
+          <p style="font-size: 13px; color: #333; line-height: 1.5;">Thank you for applying to be part of the Gurupadukam Vaidika Acharya Peetham directory. We have successfully received your registration details and ₹11 token payment details.</p>
+          
+          <div style="margin: 20px 0; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 15px; font-size: 12px; line-height: 1.6;">
+            <strong style="color: #5C0A20; font-size: 13px; display: block; border-bottom: 1px solid #eee; padding-bottom: 5px; margin-bottom: 8px;">Your Submission Details:</strong>
+            <strong>Specialization:</strong> ${specialization || 'Vedic Homams'}<br>
+            <strong>Dakshina Token:</strong> ₹11.00 (Pending Verification)<br>
+            <strong>Transaction ID:</strong> ${transactionId || 'N/A'}
+          </div>
+
+          <p style="font-size: 13px; color: #333; line-height: 1.5;">Our administrators will verify the ₹11 transaction and approve your application. Once approved, your profile will become live, and you will receive access to your Acharya Sacred Workspace.</p>
+        </div>
+      `;
+      await dispatchNotificationToUser(user, applicantSubject, applicantText, applicantHtml);
+    } catch (notifErr) {
+      console.error('[Purohit Apply Notification Failure]:', notifErr.message);
+    }
 
     res.json({ message: 'Your Acharya application has been submitted successfully for verification! ✦' });
   } catch (err) {
@@ -3906,7 +3994,41 @@ app.post('/api/purohits/:id/book', authenticateToken, async (req, res) => {
         if (priestUser.phone) {
           const smsMsg = `Hari Om Acharya ji! New booking ${bookingId} for ${poojaType} on ${bookingDate}. Devotee: ${devoteeName}, Phone: ${devoteePhone || 'N/A'}, Address: ${address}. Deposit of ₹11 received. Please login to confirm ✦`;
           sendSMSNotification(priestUser.phone, smsMsg);
+          sendWhatsAppNotification(priestUser.phone, smsMsg);
         }
+
+        // Notify Devotee immediately upon request
+        const devoteeSubject = `✦ Request Received: Vedic Ritual Booking – Gurupadukam 🌿`;
+        const devoteeHtml = `
+          <div style="font-family: Arial, sans-serif; padding: 25px; border: 2px solid #C9943A; border-radius: 12px; max-width: 600px; background-color: #FCFBF8; margin: auto;">
+            <h2 style="color: #5C0A20; text-align: center; border-bottom: 2px solid #C9943A; padding-bottom: 12px; margin-top: 0;">gurupadukam.com</h2>
+            <p style="font-size: 15px; color: #1A1A1A; font-weight: bold;">Hari Om, ${devoteeName} ji!</p>
+            <p style="font-size: 13px; color: #333; line-height: 1.5;">We have successfully received your booking request for the <strong>${poojaType}</strong> ritual. Your request has been forwarded to ${purohit.name} for confirmation.</p>
+            
+            <div style="margin: 20px 0; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 15px; font-size: 12px; line-height: 1.6;">
+              <strong>Booking ID:</strong> ${bookingId}<br>
+              <strong>Pooja Type:</strong> ${poojaType}<br>
+              <strong>Date:</strong> ${bookingDate}<br>
+              <strong>Time Slot:</strong> ${timeSlot}<br>
+              <strong>Purohit:</strong> ${purohit.name}<br>
+              <strong>Venue Address:</strong> ${address}
+            </div>
+            <p style="font-size: 13px; color: #333; line-height: 1.5;">We will notify you immediately once the Acharya confirms the slot. You can track this booking in your profile dashboard.</p>
+          </div>
+        `;
+        const devoteeSmsText = `Hari Om ${devoteeName} ji! Your request for ${poojaType} on ${bookingDate} with ${purohit.name} has been received. We will notify you once confirmed by the Acharya. ✦`;
+        
+        if (devoteeEmail) {
+          sendEmailNotification(devoteeEmail, devoteeSubject, devoteeHtml);
+        }
+        if (devoteePhone) {
+          sendSMSNotification(devoteePhone, devoteeSmsText);
+          sendWhatsAppNotification(devoteePhone, devoteeSmsText);
+        }
+
+        // Notify Super-Admin
+        const adminSubject = `✦ Alert: New Pooja Booking Initiated: ${poojaType} – Gurupadukam 🌿`;
+        sendEmailNotification('care.gurupadukam@gmail.com', adminSubject, priestHtml);
       }
     } catch (notifErr) {
       console.error('[Notification Dispatch Failed on Booking Request]:', notifErr.message);
@@ -4229,6 +4351,68 @@ app.post('/api/quotes/:id/accept', authenticateToken, async (req, res) => {
     const priestPhone = priestUser ? priestUser.phone : 'Not available';
     const priestEmail = priestUser ? priestUser.email : 'Not available';
 
+    // Fetch Priest & Devotee details for notifications
+    try {
+      const devotee = await dbGet("SELECT name, email, phone FROM users WHERE id = ?", [req.user.id]);
+      const purohit = await dbGet("SELECT name, email, phone FROM purohits WHERE id = ?", [purohitId]);
+      
+      if (devotee && purohit) {
+        const subject = `✦ Confirmed Booking: Custom Quote Accepted – Gurupadukam 🌿`;
+        const htmlBody = `
+          <div style="font-family: Arial, sans-serif; padding: 25px; border: 2px solid #C9943A; border-radius: 12px; max-width: 600px; background-color: #FCFBF8; margin: auto;">
+            <h2 style="color: #5C0A20; text-align: center; border-bottom: 2px solid #C9943A; padding-bottom: 12px; margin-top: 0;">gurupadukam.com</h2>
+            <p style="font-size: 15px; color: #1A1A1A; font-weight: bold;">Hari Om, ${devotee.name} ji!</p>
+            <p style="font-size: 13px; color: #333; line-height: 1.5;">You have accepted the quotation bid of ₹${quote.quote_amount} by ${purohit.name} for the <strong>${quote.puja_type}</strong> ritual. Your booking is confirmed!</p>
+            
+            <div style="margin: 20px 0; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 15px; font-size: 12px; line-height: 1.6;">
+              <strong>Booking ID:</strong> ${bookingId}<br>
+              <strong>Pooja Type:</strong> ${quote.puja_type}<br>
+              <strong>Date:</strong> ${bookingDate}<br>
+              <strong>Purohit:</strong> ${purohit.name}<br>
+              <strong>Venue Address:</strong> ${address}
+            </div>
+          </div>
+        `;
+        const textMsg = `Hari Om ${devotee.name} ji! Your confirmed booking ${bookingId} for ${quote.puja_type} (Custom Quote accepted) on ${bookingDate} is scheduled with ${purohit.name}. ✦`;
+        
+        // Notify Devotee
+        sendEmailNotification(devotee.email, subject, htmlBody);
+        if (devotee.phone) {
+          sendSMSNotification(devotee.phone, textMsg);
+          sendWhatsAppNotification(devotee.phone, textMsg);
+        }
+        
+        // Notify Priest
+        if (priestEmail && priestEmail !== 'Not available') {
+          const priestSubject = `✦ Confirmed Booking: Quote Accepted by Devotee – Gurupadukam 🌿`;
+          const priestHtml = `
+            <div style="font-family: Arial, sans-serif; padding: 25px; border: 2px solid #C9943A; border-radius: 12px; max-width: 600px; background-color: #FCFBF8; margin: auto;">
+              <h2 style="color: #5C0A20; text-align: center; border-bottom: 2px solid #C9943A; padding-bottom: 12px; margin-top: 0;">gurupadukam.com</h2>
+              <p style="font-size: 15px; color: #1A1A1A; font-weight: bold;">Hari Om, ${purohit.name} Acharya ji!</p>
+              <p style="font-size: 13px; color: #333; line-height: 1.5;">Devotee ${devotee.name} has accepted your quotation of ₹${quote.quote_amount} for the ${quote.puja_type} ritual on ${bookingDate}. The booking is confirmed!</p>
+              <div style="margin: 20px 0; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 15px; font-size: 12px; line-height: 1.6;">
+                <strong>Booking ID:</strong> ${bookingId}<br>
+                <strong>Date:</strong> ${bookingDate}<br>
+                <strong>Venue Address:</strong> ${address}<br>
+                <strong>Devotee Contact:</strong> ${devotee.phone || devotee.email}
+              </div>
+            </div>
+          `;
+          const priestText = `Hari Om Acharya ji! Devotee ${devotee.name} accepted your quote of ₹${quote.quote_amount} for ${quote.puja_type} on ${bookingDate}. Booking is Confirmed. ID: ${bookingId} ✦`;
+          sendEmailNotification(priestEmail, priestSubject, priestHtml);
+          if (priestPhone && priestPhone !== 'Not available') {
+            sendSMSNotification(priestPhone, priestText);
+            sendWhatsAppNotification(priestPhone, priestText);
+          }
+        }
+
+        // Notify Super-Admin
+        sendEmailNotification('care.gurupadukam@gmail.com', `✦ Alert: Custom Quote Accepted & Booking Confirmed – Gurupadukam 🌿`, htmlBody);
+      }
+    } catch (notifErr) {
+      console.error('[Notification Dispatch Failed on Quote Accept]:', notifErr.message);
+    }
+
     // Send Alert to admin
     const notifId = 'notif-' + Math.random().toString(36).substr(2, 9);
     await dbRun(
@@ -4354,23 +4538,100 @@ app.post('/api/horoscopes/book', authenticateToken, async (req, res) => {
   try {
     const horoscopeId = 'hr-' + Math.random().toString(36).substr(2, 9);
     await dbRun(
-      "INSERT INTO horoscopes (id, user_id, name, dob, tob, pob, slot_date, slot_time, status, priest_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Scheduled', ?)",
+      "INSERT INTO horoscopes (id, user_id, name, dob, tob, pob, slot_date, slot_time, status, priest_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Pending_Confirmation', ?)",
       [horoscopeId, req.user.id, name, dob, tob, pob, slotDate, slotTime, priestId || null]
     );
 
+    const devotee = await dbGet("SELECT name, email, phone, communication_preferences FROM users WHERE id = ?", [req.user.id]);
+
     let priestName = 'Hub Assigned Astrologer';
+    let targetEmail = 'care.gurupadukam@gmail.com'; // Admin chief fallback
+    let targetPhone = null;
+
     if (priestId) {
-      const pObj = await dbGet("SELECT name FROM purohits WHERE id = ?", [priestId]);
-      if (pObj) priestName = pObj.name;
+      const pObj = await dbGet("SELECT name, email, phone FROM purohits WHERE id = ?", [priestId]);
+      if (pObj) {
+        priestName = pObj.name;
+        targetEmail = pObj.email || targetEmail;
+        targetPhone = pObj.phone || null;
+      }
     }
 
+    // Insert alert log for admin dashboard
     const notifId = 'notif-' + Math.random().toString(36).substr(2, 9);
     await dbRun(
       `INSERT INTO notifications (id, title, \`desc\`, \`read\`) VALUES (?, ?, ?, 0)`,
-      [notifId, `New Horoscope Consultation`, `Horoscope reading scheduled by ${name} with ${priestName} for ${slotDate} at ${slotTime}.`]
+      [notifId, `New Horoscope Consultation Request`, `Horoscope consultation requested by ${name} with ${priestName} for ${slotDate} at ${slotTime}.`]
     );
 
-    res.status(201).json({ message: 'Horoscope consulting session booked and scheduled!', horoscopeId });
+    // Send instant notification to the Priest (or Admin if Hub Assigned)
+    try {
+      const subject = `✦ Action Required: New Horoscope Consultation: ${name} – Gurupadukam 🌿`;
+      const htmlBody = `
+        <div style="font-family: Georgia, serif; padding: 25px; border: 2px solid #C9943A; border-radius: 12px; max-width: 600px; background-color: #FCFBF8; margin: auto;">
+          <h2 style="color: #5C0A20; text-align: center; border-bottom: 2px solid #C9943A; padding-bottom: 12px; margin-top: 0;">gurupadukam.com</h2>
+          <p style="font-size: 15px; color: #1A1A1A; font-weight: bold;">Hari Om, Acharya / Administrator!</p>
+          <p style="font-size: 13px; color: #333; line-height: 1.5;">A new horoscope reading session has been requested. Please review and confirm to allocate the slot and generate the Google Meet session details.</p>
+          
+          <div style="margin: 20px 0; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 15px; font-size: 12px; line-height: 1.6;">
+            <strong style="color: #5C0A20; font-size: 13px; display: block; border-bottom: 1px solid #eee; padding-bottom: 5px; margin-bottom: 8px;">Consultation Birth Coordinates:</strong>
+            <strong>Consultation ID:</strong> ${horoscopeId}<br>
+            <strong>Devotee Name:</strong> ${name}<br>
+            <strong>Date of Birth:</strong> ${dob}<br>
+            <strong>Time of Birth:</strong> ${tob}<br>
+            <strong>Place of Birth:</strong> ${pob}<br>
+            <strong>Requested Slot:</strong> ${slotDate} (${slotTime})<br>
+            <strong>Assigned Scholar:</strong> ${priestName}
+          </div>
+
+          <p style="font-size: 13px; color: #333; line-height: 1.5;">Please log in to the dashboard to accept this consult and provide spiritual insights.</p>
+          <div style="text-align: center; margin: 25px 0;">
+            <a href="https://gurupadukam.com/login" style="background-color: #5C0A20; color: #FCFBF8; padding: 12px 25px; text-decoration: none; font-weight: bold; border-radius: 6px; font-size: 14px; display: inline-block;">Access Sacred Workspace</a>
+          </div>
+        </div>
+      `;
+      sendEmailNotification(targetEmail, subject, htmlBody);
+
+      if (targetEmail !== 'care.gurupadukam@gmail.com') {
+        const adminSubject = `✦ Alert: New Horoscope Booking Initiated: ${name} – Gurupadukam 🔮`;
+        sendEmailNotification('care.gurupadukam@gmail.com', adminSubject, htmlBody);
+      }
+
+      if (targetPhone) {
+        const smsMsg = `Hari Om! New Horoscope consulting ${horoscopeId} requested by ${name} for ${slotDate} at ${slotTime}. Please login to confirm ✦`;
+        sendSMSNotification(targetPhone, smsMsg);
+        sendWhatsAppNotification(targetPhone, smsMsg);
+      }
+
+      // Devotee notification
+      if (devotee) {
+        const devoteeSubject = `✦ Request Received: Horoscope Consultation – Gurupadukam 🔮`;
+        const devoteeText = `Hari Om ${devotee.name}! Your horoscope consultation has been requested for ${slotDate} at ${slotTime}. We will notify you once confirmed by the scholar.`;
+        const devoteeHtml = `
+          <div style="font-family: Georgia, serif; padding: 25px; border: 2px solid #C9943A; border-radius: 12px; max-width: 600px; background-color: #FCFBF8; margin: auto;">
+            <h2 style="color: #5C0A20; text-align: center; border-bottom: 2px solid #C9943A; padding-bottom: 12px; margin-top: 0;">gurupadukam.com</h2>
+            <p style="font-size: 15px; color: #1A1A1A; font-weight: bold;">Hari Om, ${devotee.name} ji!</p>
+            <p style="font-size: 13px; color: #333; line-height: 1.5;">We have successfully received your request for a personalized horoscope consultation. Our Vedic scholar will review your birth details and confirm the slot shortly.</p>
+            
+            <div style="margin: 20px 0; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 15px; font-size: 12px; line-height: 1.6;">
+              <strong style="color: #5C0A20; font-size: 13px; display: block; border-bottom: 1px solid #eee; padding-bottom: 5px; margin-bottom: 8px;">Requested Consultation Details:</strong>
+              <strong>Consultation ID:</strong> ${horoscopeId}<br>
+              <strong>Date of Birth:</strong> ${dob}<br>
+              <strong>Time of Birth:</strong> ${tob}<br>
+              <strong>Place of Birth:</strong> ${pob}<br>
+              <strong>Requested Slot:</strong> ${slotDate} (${slotTime})<br>
+              <strong>Scholar:</strong> ${priestName}
+            </div>
+            <p style="font-size: 13px; color: #333; line-height: 1.5;">You can track your consultation status directly from your devotee dashboard.</p>
+          </div>
+        `;
+        await dispatchNotificationToUser(devotee, devoteeSubject, devoteeText, devoteeHtml);
+      }
+    } catch (notifErr) {
+      console.error('[Horoscope Booking Notification Failure]:', notifErr.message);
+    }
+
+    res.status(201).json({ message: 'Horoscope consulting session requested successfully! Awaiting Acharya confirmation.', horoscopeId });
   } catch (err) {
     res.status(500).json({ error: 'Internal Error', message: err.message });
   }
@@ -4378,12 +4639,126 @@ app.post('/api/horoscopes/book', authenticateToken, async (req, res) => {
 
 app.get('/api/horoscopes/my', authenticateToken, async (req, res) => {
   try {
-    const consultations = await dbQuery("SELECT * FROM horoscopes WHERE user_id = ? ORDER BY slot_date DESC", [req.user.id]);
+    const consultations = await dbQuery(`
+      SELECT h.*, p.name as priest_name, p.image as priest_image
+      FROM horoscopes h
+      LEFT JOIN purohits p ON h.priest_id = p.id
+      WHERE h.user_id = ? 
+      ORDER BY h.slot_date DESC
+    `, [req.user.id]);
     res.json(consultations);
   } catch (err) {
     res.status(500).json({ error: 'Internal Error', message: err.message });
   }
 });
+
+// Fetch assigned horoscope bookings for Purohit
+app.get('/api/purohit/horoscopes', authenticateToken, async (req, res) => {
+  try {
+    let consultations;
+    if (req.user.role === 'super_admin' || req.user.role === 'admin') {
+      consultations = await dbQuery(`
+        SELECT h.*, u.name as user_name, u.email as user_email, u.phone as user_phone, p.name as priest_name
+        FROM horoscopes h
+        JOIN users u ON h.user_id = u.id
+        LEFT JOIN purohits p ON h.priest_id = p.id
+        ORDER BY h.slot_date DESC
+      `);
+    } else if (req.user.role === 'purohit') {
+      consultations = await dbQuery(`
+        SELECT h.*, u.name as user_name, u.email as user_email, u.phone as user_phone
+        FROM horoscopes h
+        JOIN users u ON h.user_id = u.id
+        WHERE h.priest_id = ? OR h.priest_id IS NULL
+        ORDER BY h.slot_date DESC
+      `, [req.user.id]);
+    } else {
+      return res.status(403).json({ error: 'Forbidden', message: 'Unauthorized role.' });
+    }
+    res.json(consultations);
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
+// Confirm horoscope booking and generate Google Meet link
+app.post('/api/purohit/horoscopes/:id/confirm', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const consult = await dbGet("SELECT * FROM horoscopes WHERE id = ?", [id]);
+    if (!consult) {
+      return res.status(404).json({ error: 'Not Found', message: 'Horoscope booking not found.' });
+    }
+
+    // Authorization check
+    if (req.user.role !== 'super_admin' && req.user.role !== 'admin' && consult.priest_id && consult.priest_id !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden', message: 'You are not authorized to confirm this consultation.' });
+    }
+
+    const generateMeetCode = () => {
+      const abc = 'abcdefghijklmnopqrstuvwxyz';
+      const part = (len) => Array.from({ length: len }, () => abc[Math.floor(Math.random() * abc.length)]).join('');
+      return `https://meet.google.com/${part(3)}-${part(4)}-${part(3)}`;
+    };
+    
+    const meetLink = generateMeetCode();
+    const activePriestId = consult.priest_id || req.user.id; // Assign to confirming priest if hub-assigned
+
+    await dbRun(
+      "UPDATE horoscopes SET status = 'Confirmed', google_meet_link = ?, priest_id = ? WHERE id = ?",
+      [meetLink, activePriestId, id]
+    );
+
+    // Fetch devotee details
+    const devotee = await dbGet("SELECT name, email, phone, communication_preferences FROM users WHERE id = ?", [consult.user_id]);
+    const priest = await dbGet("SELECT name FROM purohits WHERE id = ?", [activePriestId]);
+    const priestName = priest ? priest.name : 'Vedic Astrologer';
+
+    if (devotee) {
+      const prefs = devotee.communication_preferences ? JSON.parse(devotee.communication_preferences) : { sms: true, whatsapp: true, email: true };
+      const msg = `Hari Om! Your Horoscope reading with ${priestName} on ${consult.slot_date} at ${consult.slot_time} is confirmed. Join Google Meet: ${meetLink} ✦`;
+
+      // 1. Email devotee
+      if (prefs.email && devotee.email) {
+        const subject = `✦ Confirmed: Horoscope Consultation with ${priestName} – Gurupadukam 🌿`;
+        const html = `
+          <div style="font-family: Arial, sans-serif; padding: 25px; border: 2px solid #C9943A; border-radius: 12px; max-width: 600px; background-color: #FCFBF8; margin: auto;">
+            <h2 style="color: #5C0A20; text-align: center; border-bottom: 2px solid #C9943A; padding-bottom: 12px; margin-top: 0;">gurupadukam.com</h2>
+            <p style="font-size: 15px; color: #1A1A1A; font-weight: bold;">Hari Om, ${devotee.name} ji!</p>
+            <p style="font-size: 13px; color: #333; line-height: 1.5;">Your horoscope consultation request has been accepted and confirmed by our scholar, ${priestName}.</p>
+            
+            <div style="margin: 20px 0; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 15px; font-size: 12px; line-height: 1.6;">
+              <strong style="color: #5C0A20; font-size: 13px; display: block; border-bottom: 1px solid #eee; padding-bottom: 5px; margin-bottom: 8px;">Appointment Details:</strong>
+              <strong>Consultation ID:</strong> ${id}<br>
+              <strong>Date:</strong> ${consult.slot_date}<br>
+              <strong>Time Slot:</strong> ${consult.slot_time}<br>
+              <strong>Astrologer:</strong> ${priestName}<br>
+              <strong>Google Meet Link:</strong> <a href="${meetLink}" style="color: #5C0A20; font-weight: bold;">Join Video Room</a>
+            </div>
+
+            <p style="font-size: 13px; color: #333; line-height: 1.5;">Please make sure to have your birth details handy during the session. Hari Om Tat Sat.</p>
+          </div>
+        `;
+        sendEmailNotification(devotee.email, subject, html);
+      }
+
+      // 2. SMS Devotee
+      if (prefs.sms && devotee.phone) {
+        sendSMSNotification(devotee.phone, msg);
+      }
+
+      // 3. WhatsApp Simulation
+      if (prefs.whatsapp && devotee.phone) {
+        console.log(`[Simulated WhatsApp to ${devotee.phone}]: ${msg}`);
+      }
+    }
+
+    res.json({ message: 'Horoscope consultation confirmed and Google Meet code generated!', googleMeetLink: meetLink });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
 
 
 // --- 10. Satsang Spiritual Q&A Forum APIs ---
