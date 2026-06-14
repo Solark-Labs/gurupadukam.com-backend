@@ -254,7 +254,8 @@ function initializeDatabaseSQLite() {
       pob TEXT NOT NULL,
       slot_date TEXT NOT NULL,
       slot_time TEXT NOT NULL,
-      status TEXT DEFAULT 'Scheduled'
+      status TEXT DEFAULT 'Scheduled',
+      priest_id TEXT DEFAULT NULL
     )`);
 
     db.run(`CREATE TABLE IF NOT EXISTS queries (
@@ -422,6 +423,7 @@ function initializeDatabaseSQLite() {
     db.run(`ALTER TABLE purohits ADD COLUMN gov_id_image TEXT`, (err) => {});
     db.run(`ALTER TABLE events ADD COLUMN image TEXT`, (err) => {});
     db.run(`ALTER TABLE classes ADD COLUMN video_url TEXT`, (err) => {});
+    db.run(`ALTER TABLE horoscopes ADD COLUMN priest_id TEXT`, (err) => {});
 
     console.log('✦ SQLite database tables verified successfully.');
     await runSeeds();
@@ -581,7 +583,8 @@ async function initializeDatabaseMySQL() {
       pob VARCHAR(100) NOT NULL,
       slot_date VARCHAR(100) NOT NULL,
       slot_time VARCHAR(100) NOT NULL,
-      status VARCHAR(50) DEFAULT 'Scheduled'
+      status VARCHAR(50) DEFAULT 'Scheduled',
+      priest_id VARCHAR(255) DEFAULT NULL
     )`);
 
     // Spiritual Queries Table
@@ -715,6 +718,7 @@ async function initializeDatabaseMySQL() {
     try { await mysqlPool.query(`ALTER TABLE purohits ADD COLUMN gov_id_number TEXT`); } catch (e) {}
     try { await mysqlPool.query(`ALTER TABLE purohits ADD COLUMN gov_id_image TEXT`); } catch (e) {}
     try { await mysqlPool.query(`ALTER TABLE events ADD COLUMN image TEXT`); } catch (e) {}
+    try { await mysqlPool.query(`ALTER TABLE horoscopes ADD COLUMN priest_id VARCHAR(255) DEFAULT NULL`); } catch (e) {}
 
     try {
       await mysqlPool.query(`CREATE TABLE IF NOT EXISTS parinayam_profiles (

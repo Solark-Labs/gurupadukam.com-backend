@@ -4347,21 +4347,27 @@ app.get('/api/admin/quotes', authenticateToken, requireAdminOrSuper, async (req,
 
 // --- 9. Horoscopes Consulting APIs ---
 app.post('/api/horoscopes/book', authenticateToken, async (req, res) => {
-  const { name, dob, tob, pob, slotDate, slotTime } = req.body;
+  const { name, dob, tob, pob, slotDate, slotTime, priestId } = req.body;
   if (!name || !dob || !tob || !pob || !slotDate || !slotTime) {
     return res.status(400).json({ error: 'Bad Request', message: 'All birth coordinates and time slots are required.' });
   }
   try {
     const horoscopeId = 'hr-' + Math.random().toString(36).substr(2, 9);
     await dbRun(
-      "INSERT INTO horoscopes (id, user_id, name, dob, tob, pob, slot_date, slot_time, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Scheduled')",
-      [horoscopeId, req.user.id, name, dob, tob, pob, slotDate, slotTime]
+      "INSERT INTO horoscopes (id, user_id, name, dob, tob, pob, slot_date, slot_time, status, priest_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Scheduled', ?)",
+      [horoscopeId, req.user.id, name, dob, tob, pob, slotDate, slotTime, priestId || null]
     );
+
+    let priestName = 'Hub Assigned Astrologer';
+    if (priestId) {
+      const pObj = await dbGet("SELECT name FROM purohits WHERE id = ?", [priestId]);
+      if (pObj) priestName = pObj.name;
+    }
 
     const notifId = 'notif-' + Math.random().toString(36).substr(2, 9);
     await dbRun(
       `INSERT INTO notifications (id, title, \`desc\`, \`read\`) VALUES (?, ?, ?, 0)`,
-      [notifId, `New Horoscope Consultation`, `Horoscope reading scheduled by ${name} for ${slotDate} at ${slotTime}.`]
+      [notifId, `New Horoscope Consultation`, `Horoscope reading scheduled by ${name} with ${priestName} for ${slotDate} at ${slotTime}.`]
     );
 
     res.status(201).json({ message: 'Horoscope consulting session booked and scheduled!', horoscopeId });
