@@ -54,6 +54,31 @@ const otpStore = {}; // Key: email/phone, Value: { code, expiresAt }
 const loginAttempts = {}; // Key: email, Value: { count, lockUntil }
 const resetTokenStore = {}; // Key: token, Value: { email, expiresAt }
 
+async function generateNextUserId(role) {
+  let prefix = 'devotee';
+  if (role === 'purohit') prefix = 'acharya';
+  else if (role === 'admin' || role === 'super_admin') prefix = 'admin';
+  else if (role === 'cottage_partner') prefix = 'cottage';
+
+  try {
+    const rows = await dbQuery(`SELECT id FROM users WHERE id LIKE '${prefix}\_%' ESCAPE '\\'`);
+    let maxNum = 0;
+    rows.forEach(r => {
+      const parts = r.id.split('_');
+      if (parts.length > 1) {
+        const num = parseInt(parts[1]);
+        if (!isNaN(num) && num > maxNum) {
+          maxNum = num;
+        }
+      }
+    });
+    return `${prefix}_${maxNum + 1}`;
+  } catch (e) {
+    console.error('Error generating sequential user ID:', e.message);
+    return `${prefix}_` + Math.floor(1000 + Math.random() * 9000);
+  }
+}
+
 function generateICS(bookingId, poojaType, dateStr, timeSlot, meetLink, summary, description) {
   const pad = (num) => String(num).padStart(2, '0');
   
@@ -826,7 +851,7 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(400).json({ error: 'Bad Request', message: 'Please provide either the Email verification code, Phone SMS OTP, or a secure Firebase ID Token to complete registration.' });
     }
 
-    const userId = 'usr-' + Math.random().toString(36).substr(2, 9);
+    const userId = await generateNextUserId(role);
     const passwordHash = await bcrypt.hash(password, 10);
     
     let targetLocation = null;
@@ -1063,7 +1088,7 @@ async function handleGooglePayload(payload, res) {
   try {
     let user = await dbGet("SELECT * FROM users WHERE email = ?", [email]);
     if (!user) {
-      const userId = 'usr-' + Math.random().toString(36).substr(2, 9);
+      const userId = await generateNextUserId('user');
       const randomPassword = await bcrypt.hash(Math.random().toString(36), 10);
       const totp_secret = null; // Google devotee login does not require Google Authenticator/TOTP
 
@@ -1282,7 +1307,7 @@ app.post('/api/auth/firebase-verify', async (req, res) => {
 
     if (!user) {
       // Auto-register devotee user
-      const userId = 'usr-' + Math.random().toString(36).substr(2, 9);
+      const userId = await generateNextUserId('user');
       const generatedPass = await bcrypt.hash(Math.random().toString(36), 10);
       const regName = 'Devotee';
       const regEmail = `${cleanPhone}@phone.user`;
@@ -1359,7 +1384,26 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     const token = crypto.randomBytes(32).toString('hex');
     resetTokenStore[token] = { email, expiresAt: Date.now() + 60 * 60 * 1000 }; // 1 hour expiry
 
-    const origin = req.headers.origin || 'http://localhost:5173';
+    let origin = req.headers.origin;
+    if (!origin && req.headers.referer) {
+      try {
+        const refUrl = new URL(req.headers.referer);
+        origin = refUrl.origin;
+      } catch (e) {}
+    }
+    const host = req.headers.host || '';
+    const isLocal = host.includes('localhost') || host.includes('127.0.0.1') || (origin && (origin.includes('localhost') || origin.includes('127.0.0.1')));
+    
+    if (!origin) {
+      if (isLocal) {
+        origin = host.startsWith('http') ? host : `http://${host}`;
+      } else {
+        origin = 'https://gurupadukam.com';
+      }
+    }
+    if (!origin.startsWith('http://') && !origin.startsWith('https://')) {
+      origin = (isLocal ? 'http://' : 'https://') + origin;
+    }
     const resetLink = `${origin}/reset-password?token=${token}&email=${encodeURIComponent(email)}`;
 
     console.log(`[Forgot Password] Secure reset link generated for ${email}: ${resetLink}`);
@@ -1618,6 +1662,93 @@ app.post('/api/auth/profile/update', authenticateToken, async (req, res) => {
 
     const updatedUser = await dbGet("SELECT id, name, email, phone, role, location, is_blocked FROM users WHERE id = ?", [req.user.id]);
     res.json({ message: 'Profile updated successfully! ✦', user: updatedUser });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
+// Devotee apply to become Acharya
+app.post('/api/auth/profile/apply-purohit', authenticateToken, async (req, res) => {
+  const {
+    specialization,
+    fee,
+    bio,
+    credentials,
+    gov_id_type,
+    gov_id_number,
+    gov_id_image,
+    image,
+    location,
+    phone,
+    email,
+    transactionId
+  } = req.body;
+
+  try {
+    const user = await dbGet("SELECT * FROM users WHERE id = ?", [req.user.id]);
+    if (!user) {
+      return res.status(404).json({ error: 'Not Found', message: 'User profile not found.' });
+    }
+
+    const cleanPhone = phone ? normalizePhone(phone) : (user.phone || '');
+    const cleanEmail = email || user.email || '';
+    
+    const existingPurohit = await dbGet("SELECT * FROM purohits WHERE id = ?", [req.user.id]);
+    const targetLocation = location || user.location || 'Hyderabad';
+    
+    if (existingPurohit) {
+      await dbRun(
+        `UPDATE purohits SET 
+          name = ?, specialization = ?, fee = ?, image = ?, location = ?, 
+          bio = ?, credentials = ?, email = ?, phone = ?, 
+          gov_id_type = ?, gov_id_number = ?, gov_id_image = ?
+         WHERE id = ?`,
+        [
+          user.name,
+          specialization || 'Vedic Homams',
+          fee ? Number(fee) : 3500,
+          image || '/images/vedic_acharya.png',
+          targetLocation,
+          bio || '',
+          credentials || '',
+          cleanEmail,
+          cleanPhone,
+          gov_id_type || 'Aadhaar Card',
+          gov_id_number || '',
+          gov_id_image || '/images/auth/aadhaar_mock.png',
+          req.user.id
+        ]
+      );
+    } else {
+      await dbRun(
+        `INSERT INTO purohits (id, name, specialization, rating, fee, image, location, bookings_count, bio, credentials, email, phone, gov_id_type, gov_id_number, gov_id_image)
+         VALUES (?, ?, ?, 5.0, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          req.user.id,
+          user.name,
+          specialization || 'Vedic Homams',
+          fee ? Number(fee) : 3500,
+          image || '/images/vedic_acharya.png',
+          targetLocation,
+          bio || '',
+          credentials || '',
+          cleanEmail,
+          cleanPhone,
+          gov_id_type || 'Aadhaar Card',
+          gov_id_number || '',
+          gov_id_image || '/images/auth/aadhaar_mock.png'
+        ]
+      );
+    }
+
+    // Insert registration payment record for ₹11.0 Dakshina
+    const paymentId = 'pay-' + Math.random().toString(36).substr(2, 9);
+    await dbRun(`
+      INSERT INTO registration_payments (id, user_id, user_name, user_email, amount, transaction_id, payment_status)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [paymentId, req.user.id, user.name, cleanEmail, 11.0, transactionId || 'N/A', 'pending']);
+
+    res.json({ message: 'Your Acharya application has been submitted successfully for verification! ✦' });
   } catch (err) {
     res.status(500).json({ error: 'Internal Error', message: err.message });
   }
@@ -1959,7 +2090,7 @@ app.post('/api/payments/razorpay/order', authenticateToken, async (req, res) => 
 
 // Dynamic Shipping Calculator API
 app.post('/api/shipping/calculate', async (req, res) => {
-  const { cartItems, pincode } = req.body;
+  const { cartItems, pincode, latitude, longitude, address } = req.body;
   if (!cartItems || cartItems.length === 0) {
     return res.status(400).json({ error: 'Bad Request', message: 'Cart is empty.' });
   }
@@ -1970,26 +2101,62 @@ app.post('/api/shipping/calculate', async (req, res) => {
       weightGrams += (item.weightGrams || 500) * item.quantity;
     });
 
-    const isMetro = ['1', '4', '5', '6', '7'].includes(pincode?.toString().charAt(0));
-    
-    let shippingCost = 0;
-    let estimatedDays = '5-7 Business Days';
-    
-    // Flat rate logic
-    if (weightGrams <= 500) {
-      shippingCost = isMetro ? 60 : 80;
-    } else if (weightGrams <= 2000) {
-      shippingCost = isMetro ? 120 : 150;
-      estimatedDays = '4-6 Business Days';
-    } else {
-      shippingCost = 250 + (Math.ceil((weightGrams - 2000) / 1000) * 50);
-      estimatedDays = '7-10 Business Days';
-    }
-
-    // Free shipping threshold
     const subtotal = cartItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    if (subtotal > 2000) {
+
+    let shippingCost = 0;
+    let estimatedDays = '3-5 Business Days';
+
+    // Free shipping threshold aligned at ₹499
+    if (subtotal >= 499) {
       shippingCost = 0;
+      estimatedDays = '3-5 Business Days';
+    } else {
+      let isLocal = false;
+
+      // 1. Calculate distance from JNTUH Metro Station (17.5008, 78.3812) if coordinates provided
+      if (latitude !== undefined && longitude !== undefined && latitude !== null && longitude !== null) {
+        const lat1 = Number(latitude);
+        const lon1 = Number(longitude);
+        const lat2 = 17.5008;
+        const lon2 = 78.3812;
+
+        const R = 6371; // Radius of the earth in km
+        const dLat = (lat2 - lat1) * (Math.PI / 180);
+        const dLon = (lon2 - lon1) * (Math.PI / 180);
+        const a =
+          Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
+          Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        const distance = R * c; // Distance in km
+
+        if (distance <= 15) {
+          isLocal = true;
+        }
+      }
+
+      // 2. Fallback to keyword matching in address string
+      if (!isLocal && address) {
+        const addrLower = String(address).toLowerCase();
+        const localKeywords = ['hyderabad', 'kukatpally', 'jntu', 'kphb', 'miyapur', 'nizampet', 'bachupally', 'pragathi nagar', 'chanda nagar', 'madhapur', 'gachibowli', 'hitech city'];
+        isLocal = localKeywords.some(keyword => addrLower.includes(keyword));
+      }
+
+      // 3. Fallback to pincode ranges for Hyderabad/Secunderabad (500xxx)
+      if (!isLocal && pincode) {
+        const pinStr = pincode.toString();
+        if (pinStr.startsWith('500')) {
+          isLocal = true;
+        }
+      }
+
+      if (isLocal) {
+        shippingCost = 29;
+        estimatedDays = '1 Day Express Delivery';
+      } else {
+        shippingCost = 39;
+        estimatedDays = '3-5 Business Days';
+      }
     }
 
     res.json({
@@ -2623,15 +2790,31 @@ app.get('/api/orders/:id/tracking', authenticateToken, async (req, res) => {
 
 // --- 6. Admin User Management APIs ---
 
+app.get('/api/admin/purohits/pending', authenticateToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const pending = await dbQuery(`
+      SELECT u.id, u.name, u.email, u.phone, u.location, p.specialization, p.fee, p.bio, p.credentials, p.gov_id_type, p.gov_id_number, p.gov_id_image
+      FROM users u
+      JOIN purohits p ON u.id = p.id
+      WHERE u.role = 'user'
+    `);
+    res.json(pending);
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
 app.get('/api/admin/users', authenticateToken, requireAdminOrSuper, async (req, res) => {
   try {
     const users = await dbQuery(`
       SELECT u.id, u.name, u.email, u.phone, u.role, u.location, u.is_blocked, u.created_at,
              p.specialization AS purohit_specialization, p.fee AS purohit_fee, p.image AS purohit_image,
-             cp.category AS cottage_category, cp.address AS cottage_address, cp.capacity AS cottage_capacity, cp.image AS cottage_image
+             cp.category AS cottage_category, cp.address AS cottage_address, cp.capacity AS cottage_capacity, cp.image AS cottage_image,
+             rp.transaction_id AS payment_transaction_id, rp.payment_status AS payment_status, rp.amount AS payment_amount
       FROM users u
       LEFT JOIN purohits p ON u.id = p.id
       LEFT JOIN cottage_partners cp ON u.id = cp.id
+      LEFT JOIN registration_payments rp ON u.id = rp.user_id
       ORDER BY u.created_at DESC
     `);
     res.json(users);
@@ -2654,6 +2837,9 @@ app.put('/api/admin/users/:id/block', authenticateToken, requireSuperAdmin, asyn
     await dbRun("UPDATE users SET is_blocked = ? WHERE id = ?", [blockVal, req.params.id]);
     
     if (blockVal === 0) {
+      if (targetUser.role === 'purohit') {
+        await dbRun("UPDATE registration_payments SET payment_status = 'success' WHERE user_id = ?", [req.params.id]);
+      }
       // Send activation notification
       const subject = `✦ Your Gurupadukam Partner Profile has been Activated! ✦`;
       const htmlContent = `
@@ -2705,6 +2891,7 @@ app.delete('/api/admin/users/:id', authenticateToken, requireSuperAdmin, async (
     // Synchronize delete with purohits and cottage_partners tables
     await dbRun("DELETE FROM purohits WHERE id = ?", [req.params.id]);
     await dbRun("DELETE FROM cottage_partners WHERE id = ?", [req.params.id]);
+    await dbRun("DELETE FROM registration_payments WHERE user_id = ?", [req.params.id]);
     
     // Send email rejection notification
     const subject = `✦ Status Update: Your Gurupadukam Partner Application ✦`;
@@ -2755,6 +2942,57 @@ app.put('/api/admin/users/:id/role', authenticateToken, requireSuperAdmin, async
     
     const assignedLocation = role === 'admin' ? (location || 'Hyderabad') : null;
     await dbRun("UPDATE users SET role = ?, location = ? WHERE id = ?", [role, assignedLocation, req.params.id]);
+
+    // If upgraded to purohit, auto-provision and notify
+    if (role === 'purohit') {
+      const existingPurohit = await dbGet("SELECT * FROM purohits WHERE id = ?", [req.params.id]);
+      if (!existingPurohit) {
+        await dbRun(
+          `INSERT INTO purohits (id, name, specialization, rating, fee, image, location, bookings_count, bio, credentials, email, phone, gov_id_type, gov_id_number, gov_id_image)
+           VALUES (?, ?, ?, 5.0, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            req.params.id,
+            targetUser.name,
+            'Vedic Homams',
+            3500,
+            '/images/vedic_acharya.png',
+            targetUser.location || 'Hyderabad',
+            'Registered Gurupadukam Acharya',
+            'Certified Priest',
+            targetUser.email || '',
+            targetUser.phone || '',
+            'Aadhaar Card',
+            '',
+            '/images/auth/aadhaar_mock.png'
+          ]
+        );
+      }
+      
+      // Update registration_payments to success if exists
+      await dbRun("UPDATE registration_payments SET payment_status = 'success' WHERE user_id = ? AND amount = 11.0", [req.params.id]);
+      
+      // Send approval notification
+      const subject = `✦ Your Gurupadukam Acharya Application Approved! ✦`;
+      const htmlContent = `
+        <div style="font-family: Arial, sans-serif; padding: 25px; border: 2px solid #C9943A; border-radius: 12px; max-width: 600px; background-color: #FCFBF8; margin: auto;">
+          <h2 style="color: #5C0A20; text-align: center; border-bottom: 2px solid #C9943A; padding-bottom: 12px;">gurupadukam.com</h2>
+          <p style="font-size: 16px; color: #1A1A1A; font-weight: bold;">Hari Om ${targetUser.name} ji!</p>
+          <p style="font-size: 14px; color: #333; line-height: 1.6;">We are pleased to inform you that your application to become a registered Acharya/Purohit on Gurupadukam has been approved and activated! Your profile is now visible in the Acharya Peetam directory.</p>
+          <p style="font-size: 14px; color: #333; line-height: 1.6; font-weight: bold; color: #5C0A20;">IMPORTANT ACTION REQUIRED: Please log in and complete your Acharya credentials form on your Profile page (specializations, fee, profile photo, biography, and credentials details) to finalize your directory listing.</p>
+          <p style="font-size: 14px; color: #333; line-height: 1.6;">You can now log in to access your Priest Workspace dashboard, manage bookings, and communicate with devotees.</p>
+          <div style="text-align: center; margin: 25px 0;">
+            <a href="https://gurupadukam.com/login" style="background-color: #5C0A20; color: #FCFBF8; padding: 12px 25px; text-decoration: none; font-weight: bold; border-radius: 6px; font-size: 14px; display: inline-block;">Login to Priest Workspace</a>
+          </div>
+          <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
+          <p style="font-size: 9px; color: #999; text-align: center;">© gurupadukam.com. All rights reserved.</p>
+        </div>
+      `;
+      sendEmailNotification(targetUser.email, subject, htmlContent);
+      if (targetUser.phone) {
+        sendSMSNotification(targetUser.phone, `Hari Om ${targetUser.name} ji! Your Gurupadukam Acharya profile is approved. Action Required: Login at gurupadukam.com/login and update your credentials form on your profile page to finalize your listing ✦`);
+      }
+    }
+
     res.json({ message: 'User role and location updated successfully.', role, location: assignedLocation });
   } catch (err) {
     res.status(500).json({ error: 'Internal Error', message: err.message });
@@ -3051,6 +3289,30 @@ app.post('/api/admin/classes/:id/reject', authenticateToken, requireSuperAdmin, 
   }
 });
 
+// Super Admin unapprove/de-list sessional cohort
+app.post('/api/admin/classes/:id/unapprove', authenticateToken, requireSuperAdmin, async (req, res) => {
+  const classId = req.params.id;
+  try {
+    const cls = await dbGet("SELECT * FROM classes WHERE id = ?", [classId]);
+    if (!cls) {
+      return res.status(404).json({ error: 'Not Found', message: 'Proposed training session not found.' });
+    }
+    
+    await dbRun("UPDATE classes SET status = 'pending' WHERE id = ?", [classId]);
+    
+    // Log dynamic notification
+    const notifId = 'notif-' + Math.random().toString(36).substr(2, 9);
+    await dbRun(
+      `INSERT INTO notifications (id, title, \`desc\`, \`read\`) VALUES (?, ?, ?, 0)`,
+      [notifId, `Session Unapproved`, `The training/recitation session "${cls.title}" has been unapproved and returned to the review queue.`]
+    );
+
+    res.json({ message: 'Session successfully unapproved and moved back to pending queue. ✦' });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
 // Proposer/Admin edit sessional cohort coordinates
 app.put('/api/classes/:id', authenticateToken, requireAdminOrSuperOrPurohit, async (req, res) => {
   const classId = req.params.id;
@@ -3244,7 +3506,7 @@ app.get('/api/purohits', async (req, res) => {
     const purohits = await dbQuery(`
       SELECT p.* FROM purohits p
       JOIN users u ON p.id = u.id
-      WHERE u.is_blocked = 0
+      WHERE u.role = 'purohit' AND u.is_blocked = 0
       ORDER BY p.rating DESC, p.bookings_count DESC
     `);
     res.json(purohits);
@@ -3611,6 +3873,38 @@ app.post('/api/purohits/bookings/:bookingId/confirm', authenticateToken, require
         </div>
       `;
       sendEmailNotification(devotee.email, devoteeSubject, devoteeHtml, emailAttachments);
+    }
+
+    // Notify Priest as well
+    if (purohit.email) {
+      const priestConfirmSubject = `✦ Confirmed Booking: Devotee ${devotee.name} – Gurupadukam 🌿`;
+      const priestConfirmHtml = `
+        <div style="font-family: Arial, sans-serif; padding: 25px; border: 2px solid #C9943A; border-radius: 12px; max-width: 600px; background-color: #FCFBF8; margin: auto;">
+          <h2 style="color: #5C0A20; text-align: center; border-bottom: 2px solid #C9943A; padding-bottom: 12px; margin-top: 0;">gurupadukam.com</h2>
+          <p style="font-size: 15px; color: #1A1A1A; font-weight: bold;">Hari Om, ${purohit.name} Acharya ji!</p>
+          <p style="font-size: 13px; color: #333; line-height: 1.5;">You have successfully confirmed the booking for <strong>${booking.pooja_type}</strong> with devotee ${devotee.name}.</p>
+          
+          <div style="margin: 20px 0; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 15px; font-size: 12px; line-height: 1.6;">
+            <strong style="color: #5C0A20; font-size: 13px; display: block; border-bottom: 1px solid #eee; padding-bottom: 5px; margin-bottom: 8px;">Confirmed Details:</strong>
+            <strong>Booking ID:</strong> ${bookingId}<br>
+            <strong>Pooja Type:</strong> ${booking.pooja_type}<br>
+            <strong>Date:</strong> ${booking.booking_date}<br>
+            <strong>Time Slot:</strong> ${booking.time_slot}<br>
+            <strong>Devotee Name:</strong> ${devotee.name}<br>
+            <strong>Devotee Contact:</strong> ${devotee.phone || devotee.email}<br>
+            <strong>Venue Address:</strong> ${booking.address}${booking.ritual_mode === 'Online' ? `<br><strong>Google Meet Link:</strong> <a href="${meetLink}" style="color: #5C0A20; font-weight: bold;">Join Google Meet Session</a>` : ''}
+          </div>
+          <p style="font-size: 13px; color: #333; line-height: 1.5;">Please access your dashboard to view the booking and customized checklist.</p>
+        </div>
+      `;
+      sendEmailNotification(purohit.email, priestConfirmSubject, priestConfirmHtml, [{ filename: 'invite.ics', content: icsString, contentType: 'text/calendar; charset=utf-8; method=REQUEST' }]);
+    }
+
+    if (purohit.phone) {
+      const priestSms = booking.ritual_mode === 'Online'
+        ? `Hari Om! Confirmed Online Puja booking ${bookingId} for devotee ${devotee.name}. Join Google Meet: ${meetLink} ✦`
+        : `Hari Om! Confirmed Puja booking ${bookingId} for devotee ${devotee.name} on ${booking.booking_date} at ${booking.address}. ✦`;
+      sendSMSNotification(purohit.phone, priestSms);
     }
 
     if (devotee.phone) {
