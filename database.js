@@ -228,7 +228,14 @@ function initializeDatabaseSQLite() {
       phone TEXT,
       gov_id_type TEXT,
       gov_id_number TEXT,
-      gov_id_image TEXT
+      gov_id_image TEXT,
+      experience_years INTEGER DEFAULT 5,
+      languages TEXT DEFAULT 'Telugu, Sanskrit',
+      is_verified INTEGER DEFAULT 0,
+      banner_image TEXT,
+      teaching_interest INTEGER DEFAULT 0,
+      teaching_specialization TEXT,
+      instructor_bio TEXT
     )`);
 
     db.run(`CREATE TABLE IF NOT EXISTS purohit_bookings (
@@ -245,6 +252,15 @@ function initializeDatabaseSQLite() {
       secure_deposit REAL DEFAULT 0
     )`);
 
+    db.run(`CREATE TABLE IF NOT EXISTS purohit_posts (
+      id TEXT PRIMARY KEY,
+      purohit_id TEXT NOT NULL,
+      image TEXT NOT NULL,
+      caption TEXT,
+      likes_count INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+
     db.run(`CREATE TABLE IF NOT EXISTS horoscopes (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -255,7 +271,8 @@ function initializeDatabaseSQLite() {
       slot_date TEXT NOT NULL,
       slot_time TEXT NOT NULL,
       status TEXT DEFAULT 'Scheduled',
-      priest_id TEXT DEFAULT NULL
+      priest_id TEXT DEFAULT NULL,
+      google_meet_link TEXT DEFAULT NULL
     )`);
 
     db.run(`CREATE TABLE IF NOT EXISTS queries (
@@ -424,6 +441,23 @@ function initializeDatabaseSQLite() {
     db.run(`ALTER TABLE events ADD COLUMN image TEXT`, (err) => {});
     db.run(`ALTER TABLE classes ADD COLUMN video_url TEXT`, (err) => {});
     db.run(`ALTER TABLE horoscopes ADD COLUMN priest_id TEXT`, (err) => {});
+    db.run(`ALTER TABLE horoscopes ADD COLUMN google_meet_link TEXT`, (err) => {});
+    db.run(`ALTER TABLE purohits ADD COLUMN experience_years INTEGER DEFAULT 5`, (err) => {});
+    db.run(`ALTER TABLE purohits ADD COLUMN languages TEXT DEFAULT 'Telugu, Sanskrit'`, (err) => {});
+    db.run(`ALTER TABLE purohits ADD COLUMN is_verified INTEGER DEFAULT 0`, (err) => {});
+    db.run(`ALTER TABLE purohits ADD COLUMN banner_image TEXT`, (err) => {});
+    db.run(`ALTER TABLE purohits ADD COLUMN teaching_interest INTEGER DEFAULT 0`, (err) => {});
+    db.run(`ALTER TABLE purohits ADD COLUMN teaching_specialization TEXT`, (err) => {});
+    db.run(`ALTER TABLE purohits ADD COLUMN instructor_bio TEXT`, (err) => {});
+
+    // SQLite Index creations for High-Concurrence Scalability
+    db.run(`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_users_role_blocked ON users(role, is_blocked)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_purohits_location ON purohits(location)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_purohit_bookings_purohit ON purohit_bookings(purohit_id)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_purohit_posts_purohit ON purohit_posts(purohit_id)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_proposals_status ON proposals(status)`);
 
     console.log('✦ SQLite database tables verified successfully.');
     await runSeeds();
@@ -555,7 +589,14 @@ async function initializeDatabaseMySQL() {
       phone TEXT,
       gov_id_type TEXT,
       gov_id_number TEXT,
-      gov_id_image TEXT
+      gov_id_image TEXT,
+      experience_years INT DEFAULT 5,
+      languages VARCHAR(255) DEFAULT 'Telugu, Sanskrit',
+      is_verified INT DEFAULT 0,
+      banner_image VARCHAR(255),
+      teaching_interest INT DEFAULT 0,
+      teaching_specialization VARCHAR(255),
+      instructor_bio TEXT
     )`);
 
     // Purohit Bookings Table
@@ -573,6 +614,17 @@ async function initializeDatabaseMySQL() {
       secure_deposit DECIMAL(10,2) DEFAULT 0
     )`);
 
+    // Purohit Posts Table
+    await mysqlPool.query(`CREATE TABLE IF NOT EXISTS purohit_posts (
+      id VARCHAR(255) PRIMARY KEY,
+      purohit_id VARCHAR(255) NOT NULL,
+      image LONGTEXT NOT NULL,
+      caption TEXT,
+      likes_count INT DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_purohit_posts_purohit (purohit_id)
+    )`);
+
     // Horoscopes Table
     await mysqlPool.query(`CREATE TABLE IF NOT EXISTS horoscopes (
       id VARCHAR(255) PRIMARY KEY,
@@ -584,7 +636,8 @@ async function initializeDatabaseMySQL() {
       slot_date VARCHAR(100) NOT NULL,
       slot_time VARCHAR(100) NOT NULL,
       status VARCHAR(50) DEFAULT 'Scheduled',
-      priest_id VARCHAR(255) DEFAULT NULL
+      priest_id VARCHAR(255) DEFAULT NULL,
+      google_meet_link VARCHAR(500) DEFAULT NULL
     )`);
 
     // Spiritual Queries Table
@@ -719,6 +772,7 @@ async function initializeDatabaseMySQL() {
     try { await mysqlPool.query(`ALTER TABLE purohits ADD COLUMN gov_id_image TEXT`); } catch (e) {}
     try { await mysqlPool.query(`ALTER TABLE events ADD COLUMN image TEXT`); } catch (e) {}
     try { await mysqlPool.query(`ALTER TABLE horoscopes ADD COLUMN priest_id VARCHAR(255) DEFAULT NULL`); } catch (e) {}
+    try { await mysqlPool.query(`ALTER TABLE horoscopes ADD COLUMN google_meet_link VARCHAR(500) DEFAULT NULL`); } catch (e) {}
 
     try {
       await mysqlPool.query(`CREATE TABLE IF NOT EXISTS parinayam_profiles (
@@ -793,6 +847,48 @@ async function initializeDatabaseMySQL() {
 
     try {
       await mysqlPool.query(`ALTER TABLE classes ADD COLUMN video_url VARCHAR(1000)`);
+    } catch (e) {}
+
+    try {
+      await mysqlPool.query(`ALTER TABLE purohits ADD COLUMN experience_years INT DEFAULT 5`);
+    } catch (e) {}
+    try {
+      await mysqlPool.query(`ALTER TABLE purohits ADD COLUMN languages VARCHAR(255) DEFAULT 'Telugu, Sanskrit'`);
+    } catch (e) {}
+    try {
+      await mysqlPool.query(`ALTER TABLE purohits ADD COLUMN is_verified INT DEFAULT 0`);
+    } catch (e) {}
+    try {
+      await mysqlPool.query(`ALTER TABLE purohits ADD COLUMN banner_image VARCHAR(255)`);
+    } catch (e) {}
+    try {
+      await mysqlPool.query(`ALTER TABLE purohits ADD COLUMN teaching_interest INT DEFAULT 0`);
+    } catch (e) {}
+    try {
+      await mysqlPool.query(`ALTER TABLE purohits ADD COLUMN teaching_specialization VARCHAR(255)`);
+    } catch (e) {}
+    try {
+      await mysqlPool.query(`ALTER TABLE purohits ADD COLUMN instructor_bio TEXT`);
+    } catch (e) {}
+
+    // MySQL Index creations for High-Concurrence Scalability
+    try {
+      await mysqlPool.query(`CREATE INDEX idx_users_email ON users(email)`);
+    } catch (e) {}
+    try {
+      await mysqlPool.query(`CREATE INDEX idx_users_phone ON users(phone)`);
+    } catch (e) {}
+    try {
+      await mysqlPool.query(`CREATE INDEX idx_users_role_blocked ON users(role, is_blocked)`);
+    } catch (e) {}
+    try {
+      await mysqlPool.query(`CREATE INDEX idx_purohits_location ON purohits(location)`);
+    } catch (e) {}
+    try {
+      await mysqlPool.query(`CREATE INDEX idx_purohit_bookings_purohit ON purohit_bookings(purohit_id)`);
+    } catch (e) {}
+    try {
+      await mysqlPool.query(`CREATE INDEX idx_proposals_status ON proposals(status)`);
     } catch (e) {}
 
     console.log('✦ Hostinger MySQL database tables verified successfully.');
@@ -979,15 +1075,18 @@ async function seedUsers() {
     // Delete any old super admin using the incorrect email
     await dbRun("DELETE FROM users WHERE email = 'superadmin@gurupadukam.com'");
 
-    const existingSuperAdmin = await dbGet("SELECT * FROM users WHERE email = 'care.gurupadukam@gmail.com'");
+    const existingSuperAdmin = await dbGet("SELECT * FROM users WHERE id = 'admin_1'");
     if (!existingSuperAdmin) {
       const superAdminId = 'admin_1';
       const passwordHash = await bcrypt.hash('admin123', 10);
       await dbRun(
         "INSERT INTO users (id, name, email, password_hash, role, phone) VALUES (?, ?, ?, ?, ?, ?)",
-        [superAdminId, 'Super Admin', 'care.gurupadukam@gmail.com', passwordHash, 'super_admin', '+919949730175']
+        [superAdminId, 'Super Admin', 'reach@gurupadukam.com', passwordHash, 'super_admin', '+919949730175']
       );
-      console.log('✦ Super Admin user seeded. Email: care.gurupadukam@gmail.com');
+      console.log('✦ Super Admin user seeded. Email: reach@gurupadukam.com');
+    } else if (existingSuperAdmin.email !== 'reach@gurupadukam.com') {
+      await dbRun("UPDATE users SET email = ? WHERE id = 'admin_1'", ['reach@gurupadukam.com']);
+      console.log('✦ Super Admin email updated to reach@gurupadukam.com');
     }
 
     const existingAdmins = await dbGet("SELECT * FROM users WHERE role = 'admin'");
@@ -1320,9 +1419,9 @@ async function seedVedicSystem() {
 
     for (const p of seededPurohits) {
       await dbRun(
-        `INSERT INTO purohits (id, name, specialization, rating, fee, image, location, bookings_count, bio, credentials, portfolio_images, email, phone, gov_id_type, gov_id_number, gov_id_image)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [p.id, p.name, p.specialization, p.rating, p.fee, p.image, p.location, p.bookings_count, p.bio, p.credentials, p.portfolio_images, p.email, p.phone, p.gov_id_type, p.gov_id_number, p.gov_id_image]
+        `INSERT INTO purohits (id, name, specialization, rating, fee, image, location, bookings_count, bio, credentials, portfolio_images, email, phone, gov_id_type, gov_id_number, gov_id_image, is_verified, teaching_interest)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [p.id, p.name, p.specialization, p.rating, p.fee, p.image, p.location, p.bookings_count, p.bio, p.credentials, p.portfolio_images, p.email, p.phone, p.gov_id_type, p.gov_id_number, p.gov_id_image, 1, 1]
       );
     }
     console.log('✦ Seeded 5 Vetted Priests in purohits table.');

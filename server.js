@@ -1820,7 +1820,7 @@ app.post('/api/auth/profile/apply-purohit', authenticateToken, async (req, res) 
     // Send notifications to Admin and Devotee
     try {
       // 1. Alert Super-Admin
-      const adminEmail = 'care.gurupadukam@gmail.com';
+      const adminEmail = 'reach@gurupadukam.com';
       const adminSubject = `✦ Alert: New Acharya Registration Pending Verification – Gurupadukam 🌿`;
       const adminHtml = `
         <div style="font-family: Georgia, serif; padding: 25px; border: 2px solid #C9943A; border-radius: 12px; max-width: 600px; background-color: #FCFBF8; margin: auto;">
@@ -2293,7 +2293,7 @@ app.post('/api/shipping/calculate', async (req, res) => {
 
 async function triggerOrderPlacedNotification(orderId, customerName, customerEmail, customerPhone, shippingAddress, items, total, paymentMethod) {
   try {
-    const receiptSubject = `✦ Order Placed: ${orderId} – Gurupadukam Store 🌿`;
+    const receiptSubject = `✦ Order Received: ${orderId} – Gurupadukam Store 🌿`;
     
     // Parse address
     let parsedAddress = shippingAddress;
@@ -2302,70 +2302,29 @@ async function triggerOrderPlacedNotification(orderId, customerName, customerEma
     }
     const addressStr = `${parsedAddress.addressLine || parsedAddress.address || ''}, ${parsedAddress.city || ''}, ${parsedAddress.state || ''} - ${parsedAddress.pincode || parsedAddress.zip || ''}`;
 
-    let itemsHtml = '';
-    for (const item of items) {
-      const name = item.name || item.product_name;
-      const quantity = item.quantity || item.units || 1;
-      const price = item.price || item.selling_price;
-      itemsHtml += `
-        <tr>
-          <td style="padding: 10px; border-bottom: 1px solid #eee; font-size: 13px;">${name}</td>
-          <td style="padding: 10px; border-bottom: 1px solid #eee; font-size: 13px; text-align: center;">${quantity}</td>
-          <td style="padding: 10px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right;">₹${price}</td>
-          <td style="padding: 10px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right;">₹${price * quantity}</td>
-        </tr>
-      `;
-    }
-
     const receiptHtml = `
-      <div style="font-family: Arial, sans-serif; padding: 25px; border: 2px solid #C9943A; border-radius: 12px; max-width: 600px; background-color: #FCFBF8; margin: auto;">
+      <div style="font-family: Arial, sans-serif; padding: 25px; border: 1px solid #C9943A; border-radius: 12px; max-width: 600px; background-color: #FCFBF8; margin: auto;">
         <h2 style="color: #5C0A20; text-align: center; border-bottom: 2px solid #C9943A; padding-bottom: 12px; margin-top: 0;">gurupadukam.com</h2>
         <p style="font-size: 15px; color: #1A1A1A; font-weight: bold;">Hari Om, ${customerName} ji!</p>
-        <p style="font-size: 13px; color: #333; line-height: 1.5;">Thank you for your order! Your order has been successfully placed and is pending verification. Once the payment has been validated, we will confirm your order, dispatch your package, and send you a confirmation email.</p>
+        <p style="font-size: 13px; color: #333; line-height: 1.5;">We have successfully received your order <strong>#${orderId}</strong> on Gurupadukam.</p>
         
         <div style="margin: 20px 0; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 15px; font-size: 12px; line-height: 1.6;">
-          <strong style="color: #5C0A20; font-size: 13px; display: block; border-bottom: 1px solid #eee; padding-bottom: 5px; margin-bottom: 8px;">Order Details:</strong>
+          <strong>Order Summary:</strong><br>
           <strong>Order ID:</strong> ${orderId}<br>
-          <strong>Date:</strong> ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}<br>
+          <strong>Total Amount:</strong> ₹${total}<br>
           <strong>Payment Method:</strong> ${paymentMethod}<br>
-          <strong>Payment Status:</strong> Pending Verification<br>
-          <strong>Logistics Status:</strong> Awaiting Payment Confirmation 🚚
+          <strong>Status:</strong> Pending Verification / Awaiting Confirmation
         </div>
 
-        <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
-          <thead>
-            <tr style="background-color: rgba(201,148,58,0.1); color: #5C0A20;">
-              <th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; border-bottom: 2px solid #C9943A;">Item</th>
-              <th style="padding: 10px; text-align: center; font-size: 12px; font-weight: bold; border-bottom: 2px solid #C9943A;">Qty</th>
-              <th style="padding: 10px; text-align: right; font-size: 12px; font-weight: bold; border-bottom: 2px solid #C9943A;">Price</th>
-              <th style="padding: 10px; text-align: right; font-size: 12px; font-weight: bold; border-bottom: 2px solid #C9943A;">Subtotal</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${itemsHtml}
-            <tr style="font-weight: bold; color: #5C0A20; background: rgba(201,148,58,0.05);">
-              <td colspan="3" style="padding: 12px 10px; text-align: right; font-size: 13px; border-top: 2px solid #C9943A;">Grand Total:</td>
-              <td style="padding: 12px 10px; text-align: right; font-size: 14px; border-top: 2px solid #C9943A;">₹${total}</td>
-            </tr>
-          </tbody>
-        </table>
-
-        <div style="margin: 20px 0; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 15px; font-size: 12px; line-height: 1.6;">
-          <strong style="color: #5C0A20; font-size: 13px; display: block; border-bottom: 1px solid #eee; padding-bottom: 5px; margin-bottom: 8px;">Delivery Coordinates:</strong>
-          <strong>Recipient Name:</strong> ${customerName}<br>
-          <strong>Phone:</strong> ${customerPhone}<br>
-          <strong>Address:</strong> ${addressStr}
-        </div>
-
-        <p style="font-size: 13px; color: #333; line-height: 1.5;">You can track your order status in your Devotee dashboard. If you have any questions, feel free to contact us.</p>
+        <p style="font-size: 13px; color: #333; line-height: 1.5;">We are verifying your transaction coordinates. A detailed email invoice will be sent to you as soon as the order is confirmed and dispatched.</p>
         <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
-        <p style="font-size: 9px; color: #999; text-align: center; margin-top: 10px;">Thank you for supporting our cottage artisans! © gurupadukam.com. All rights reserved.</p>
+        <p style="font-size: 9px; color: #999; text-align: center; margin-top: 10px;">© gurupadukam.com. All rights reserved.</p>
       </div>
     `;
 
     await sendEmailNotification(customerEmail, receiptSubject, receiptHtml);
-    await sendSMSNotification(customerPhone, `Hari Om! Order ${orderId} has been successfully placed for ₹${total} via ${paymentMethod}. Payment verification pending. ✦`);
-    await sendWhatsAppNotification(customerPhone, `Hari Om! Order ${orderId} has been successfully placed for ₹${total} via ${paymentMethod}. Payment verification pending. ✦`);
+    await sendSMSNotification(customerPhone, `Hari Om! Order ${orderId} received for ₹${total}. Verification pending. ✦`);
+    await sendWhatsAppNotification(customerPhone, `Hari Om! Order ${orderId} received for ₹${total}. Verification pending. ✦`);
   } catch (notifErr) {
     console.error('[Notification Dispatch Failed on Order Placed]:', notifErr.message);
   }
@@ -2965,6 +2924,56 @@ app.get('/api/orders/:id/tracking', authenticateToken, async (req, res) => {
   }
 });
 
+// Guest tracking endpoint (unauthenticated)
+app.get('/api/orders/track-guest', async (req, res) => {
+  const { orderId, contact } = req.query;
+  if (!orderId || !contact) {
+    return res.status(400).json({ error: 'Bad Request', message: 'Order ID and Email/Phone contact details are required.' });
+  }
+
+  try {
+    const order = await dbGet("SELECT * FROM orders WHERE id = ?", [orderId]);
+    if (!order) {
+      return res.status(404).json({ error: 'Not Found', message: 'Order not found.' });
+    }
+
+    const contactClean = contact.trim().toLowerCase();
+    const orderEmail = order.customer_email ? order.customer_email.trim().toLowerCase() : '';
+    const orderPhone = order.customer_phone ? order.customer_phone.trim().replace(/\D/g, '') : '';
+    const searchPhone = contactClean.replace(/\D/g, '');
+
+    const isEmailMatch = orderEmail && orderEmail === contactClean;
+    const isPhoneMatch = orderPhone && searchPhone && (orderPhone.includes(searchPhone) || searchPhone.includes(orderPhone));
+
+    if (!isEmailMatch && !isPhoneMatch) {
+      return res.status(403).json({ error: 'Forbidden', message: 'Contact coordinates mismatch for this order.' });
+    }
+
+    const tracking = getShiprocketTracking(order.shiprocket_awb || 'SR_MOCK_AWB', order.date);
+    if (tracking.status !== order.status) {
+      await dbRun("UPDATE orders SET status = ? WHERE id = ?", [tracking.status, order.id]);
+    }
+
+    let parsedAddress = {};
+    try {
+      parsedAddress = typeof order.shipping_address === 'string' ? JSON.parse(order.shipping_address) : order.shipping_address;
+    } catch (e) {}
+
+    res.json({
+      id: order.id,
+      customerName: order.customer_name,
+      total: order.total,
+      paymentMethod: order.payment_method,
+      status: tracking.status,
+      date: order.date,
+      history: tracking.history,
+      shippingAddress: parsedAddress
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
 
 // --- 6. Admin User Management APIs ---
 
@@ -3090,7 +3099,7 @@ app.delete('/api/admin/users/:id', authenticateToken, requireSuperAdmin, async (
           </ul>
         </div>
         
-        <p style="font-size: 14px; color: #333; line-height: 1.6;">If you believe this was in error, please register again with accurate coordinates and documents or contact support at <a href="mailto:care.gurupadukam@gmail.com" style="color: #5C0A20; font-weight: bold; text-decoration: none;">care.gurupadukam@gmail.com</a>.</p>
+        <p style="font-size: 14px; color: #333; line-height: 1.6;">If you believe this was in error, please register again with accurate coordinates and documents or contact support at <a href="mailto:reach@gurupadukam.com" style="color: #5C0A20; font-weight: bold; text-decoration: none;">reach@gurupadukam.com</a>.</p>
         
         <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
         <p style="font-size: 9px; color: #999; text-align: center;">© gurupadukam.com. All rights reserved.</p>
@@ -3422,8 +3431,8 @@ app.get('/api/classes/:id/registrations', authenticateToken, requireAdminOrSuper
   }
 });
 
-// Admin training proposals list (Super Admin View)
-app.get('/api/admin/class-proposals', authenticateToken, requireSuperAdmin, async (req, res) => {
+// Admin training proposals list (Super Admin / Admin View)
+app.get('/api/admin/class-proposals', authenticateToken, requireAdminOrSuper, async (req, res) => {
   try {
     const proposals = await dbQuery("SELECT * FROM classes WHERE status = 'pending' ORDER BY id DESC");
     res.json(proposals);
@@ -3432,8 +3441,8 @@ app.get('/api/admin/class-proposals', authenticateToken, requireSuperAdmin, asyn
   }
 });
 
-// Super Admin approve sessional proposal
-app.post('/api/admin/classes/:id/approve', authenticateToken, requireSuperAdmin, async (req, res) => {
+// Admin approve sessional proposal
+app.post('/api/admin/classes/:id/approve', authenticateToken, requireAdminOrSuper, async (req, res) => {
   const classId = req.params.id;
   try {
     const cls = await dbGet("SELECT * FROM classes WHERE id = ?", [classId]);
@@ -3456,8 +3465,8 @@ app.post('/api/admin/classes/:id/approve', authenticateToken, requireSuperAdmin,
   }
 });
 
-// Super Admin reject/delete proposed session
-app.post('/api/admin/classes/:id/reject', authenticateToken, requireSuperAdmin, async (req, res) => {
+// Admin reject/delete proposed session
+app.post('/api/admin/classes/:id/reject', authenticateToken, requireAdminOrSuper, async (req, res) => {
   const classId = req.params.id;
   try {
     await dbRun("DELETE FROM classes WHERE id = ?", [classId]);
@@ -3467,8 +3476,8 @@ app.post('/api/admin/classes/:id/reject', authenticateToken, requireSuperAdmin, 
   }
 });
 
-// Super Admin unapprove/de-list sessional cohort
-app.post('/api/admin/classes/:id/unapprove', authenticateToken, requireSuperAdmin, async (req, res) => {
+// Admin unapprove/de-list sessional cohort
+app.post('/api/admin/classes/:id/unapprove', authenticateToken, requireAdminOrSuper, async (req, res) => {
   const classId = req.params.id;
   try {
     const cls = await dbGet("SELECT * FROM classes WHERE id = ?", [classId]);
@@ -3506,11 +3515,13 @@ app.put('/api/classes/:id', authenticateToken, requireAdminOrSuperOrPurohit, asy
       return res.status(404).json({ error: 'Not Found', message: 'Class cohort not found.' });
     }
 
-    if (req.user.role !== 'super_admin' && req.user.role !== 'admin' && cls.proposer_name !== req.user.name) {
+    const isOwnerOrInstructor = cls.proposer_name === req.user.name || (req.user.role === 'purohit' && cls.instructor_name && req.user.name && cls.instructor_name.toLowerCase().includes(req.user.name.toLowerCase()));
+    
+    if (req.user.role !== 'super_admin' && req.user.role !== 'admin' && !isOwnerOrInstructor) {
       return res.status(403).json({ error: 'Forbidden', message: 'You can only edit your own proposed sessional cohorts.' });
     }
 
-    const newStatus = req.user.role === 'super_admin' ? 'approved' : 'pending';
+    const newStatus = (req.user.role === 'super_admin' || req.user.role === 'admin') ? 'approved' : 'pending';
 
     await dbRun(
       `UPDATE classes 
@@ -3520,9 +3531,9 @@ app.put('/api/classes/:id', authenticateToken, requireAdminOrSuperOrPurohit, asy
     );
 
     res.json({
-      message: req.user.role === 'super_admin'
+      message: (req.user.role === 'super_admin' || req.user.role === 'admin')
         ? 'Gurukulam class details scheduled and updated successfully.'
-        : 'Class modifications submitted successfully! Pending Super-Admin confirmation. ✦',
+        : 'Class modifications submitted successfully! Pending admin or super-admin confirmation. ✦',
       status: newStatus
     });
   } catch (err) {
@@ -3778,7 +3789,7 @@ app.put('/api/purohits/:id', authenticateToken, async (req, res) => {
     return res.status(403).json({ error: 'Forbidden', message: 'You are not authorized to modify this profile.' });
   }
 
-  const { name, specialization, fee, image, bio, credentials, portfolioImages, email, phone, location } = req.body;
+  const { name, specialization, fee, image, bio, credentials, portfolioImages, email, phone, location, experience_years, languages, banner_image, teaching_interest, teaching_specialization, instructor_bio } = req.body;
   
   if (!name || !specialization || !location) {
     return res.status(400).json({ error: 'Bad Request', message: 'Name, Specialization, and Location are required.' });
@@ -3813,12 +3824,18 @@ app.put('/api/purohits/:id', authenticateToken, async (req, res) => {
       `UPDATE purohits SET 
         name = ?, specialization = ?, fee = ?, image = ?, 
         bio = ?, credentials = ?, portfolio_images = ?, 
-        email = ?, phone = ?, location = ? 
+        email = ?, phone = ?, location = ?,
+        experience_years = ?, languages = ?, banner_image = ?,
+        teaching_interest = ?, teaching_specialization = ?, instructor_bio = ?
        WHERE id = ?`,
       [
         name, specialization, fee ? Number(fee) : 0, image || '/images/vedic_acharya.png',
         bio || '', credentials || '', JSON.stringify(pList),
-        email || userExists.email, phone || userExists.phone, location, purohitId
+        email || userExists.email, phone || userExists.phone, location,
+        experience_years ? Number(experience_years) : 5, languages || 'Telugu, Sanskrit', banner_image || null,
+        teaching_interest !== undefined ? (teaching_interest ? 1 : 0) : 0,
+        teaching_specialization || '', instructor_bio || '',
+        purohitId
       ]
     );
 
@@ -4028,7 +4045,7 @@ app.post('/api/purohits/:id/book', authenticateToken, async (req, res) => {
 
         // Notify Super-Admin
         const adminSubject = `✦ Alert: New Pooja Booking Initiated: ${poojaType} – Gurupadukam 🌿`;
-        sendEmailNotification('care.gurupadukam@gmail.com', adminSubject, priestHtml);
+        sendEmailNotification('reach@gurupadukam.com', adminSubject, priestHtml);
       }
     } catch (notifErr) {
       console.error('[Notification Dispatch Failed on Booking Request]:', notifErr.message);
@@ -4407,7 +4424,7 @@ app.post('/api/quotes/:id/accept', authenticateToken, async (req, res) => {
         }
 
         // Notify Super-Admin
-        sendEmailNotification('care.gurupadukam@gmail.com', `✦ Alert: Custom Quote Accepted & Booking Confirmed – Gurupadukam 🌿`, htmlBody);
+        sendEmailNotification('reach@gurupadukam.com', `✦ Alert: Custom Quote Accepted & Booking Confirmed – Gurupadukam 🌿`, htmlBody);
       }
     } catch (notifErr) {
       console.error('[Notification Dispatch Failed on Quote Accept]:', notifErr.message);
@@ -4545,7 +4562,7 @@ app.post('/api/horoscopes/book', authenticateToken, async (req, res) => {
     const devotee = await dbGet("SELECT name, email, phone, communication_preferences FROM users WHERE id = ?", [req.user.id]);
 
     let priestName = 'Hub Assigned Astrologer';
-    let targetEmail = 'care.gurupadukam@gmail.com'; // Admin chief fallback
+    let targetEmail = 'reach@gurupadukam.com'; // Admin chief fallback
     let targetPhone = null;
 
     if (priestId) {
@@ -4592,9 +4609,9 @@ app.post('/api/horoscopes/book', authenticateToken, async (req, res) => {
       `;
       sendEmailNotification(targetEmail, subject, htmlBody);
 
-      if (targetEmail !== 'care.gurupadukam@gmail.com') {
+      if (targetEmail !== 'reach@gurupadukam.com') {
         const adminSubject = `✦ Alert: New Horoscope Booking Initiated: ${name} – Gurupadukam 🔮`;
-        sendEmailNotification('care.gurupadukam@gmail.com', adminSubject, htmlBody);
+        sendEmailNotification('reach@gurupadukam.com', adminSubject, htmlBody);
       }
 
       if (targetPhone) {
@@ -5070,6 +5087,78 @@ app.post('/api/purohits/:id/reviews', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Internal Error', message: err.message });
   }
 });
+
+
+// --- 8.9 Purohits Instagram-Style Posts & Updates API ---
+// 1. Create a Post (Only authorized Purohits can post to their own profiles)
+app.post('/api/purohit/posts', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'purohit') {
+    return res.status(403).json({ error: 'Forbidden', message: 'Only Purohits can upload posts.' });
+  }
+  const { image, caption } = req.body;
+  if (!image) {
+    return res.status(400).json({ error: 'Bad Request', message: 'Post image is required.' });
+  }
+  try {
+    const postId = 'post-' + Math.random().toString(36).substr(2, 9);
+    await dbRun(
+      `INSERT INTO purohit_posts (id, purohit_id, image, caption)
+       VALUES (?, ?, ?, ?)`,
+      [postId, req.user.id, image, caption || '']
+    );
+    res.status(201).json({ message: '✦ Post uploaded successfully! ✦', postId });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
+// 2. Get all posts for a specific Purohit (Public)
+app.get('/api/purohits/:id/posts', async (req, res) => {
+  try {
+    const posts = await dbQuery(
+      `SELECT * FROM purohit_posts WHERE purohit_id = ? ORDER BY created_at DESC`,
+      [req.params.id]
+    );
+    res.json(posts);
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
+// 3. Delete a Post (Only the owner or super admin can delete a post)
+app.delete('/api/purohit/posts/:postId', authenticateToken, async (req, res) => {
+  try {
+    const post = await dbGet("SELECT * FROM purohit_posts WHERE id = ?", [req.params.postId]);
+    if (!post) {
+      return res.status(404).json({ error: 'Not Found', message: 'Post not found.' });
+    }
+    const isOwner = post.purohit_id === req.user.id;
+    const isSuperAdmin = req.user.role === 'super_admin';
+    if (!isOwner && !isSuperAdmin) {
+      return res.status(403).json({ error: 'Forbidden', message: 'You are not authorized to delete this post.' });
+    }
+    await dbRun("DELETE FROM purohit_posts WHERE id = ?", [req.params.postId]);
+    res.json({ message: 'Post deleted successfully.' });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
+// 4. Like a Post (Public)
+app.post('/api/purohits/posts/:postId/like', async (req, res) => {
+  try {
+    const post = await dbGet("SELECT * FROM purohit_posts WHERE id = ?", [req.params.postId]);
+    if (!post) {
+      return res.status(404).json({ error: 'Not Found', message: 'Post not found.' });
+    }
+    const newLikes = (post.likes_count || 0) + 1;
+    await dbRun("UPDATE purohit_posts SET likes_count = ? WHERE id = ?", [newLikes, req.params.postId]);
+    res.json({ message: 'Post liked.', likesCount: newLikes });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
 
 // Priest Send Puja Items list directly to Devotee's Phone via simulated SMS
 app.post('/api/purohits/bookings/:bookingId/send-items', authenticateToken, async (req, res) => {
