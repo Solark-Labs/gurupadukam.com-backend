@@ -13,6 +13,7 @@ dotenv.config({ path: path.resolve(__dirname, '.env') });
 dotenv.config({ path: path.resolve(__dirname, '.env.local') });
 
 import express from 'express';
+import compression from 'compression';
 import { GoogleAuth } from 'google-auth-library';
 import fetch from 'node-fetch';
 import rateLimit from 'express-rate-limit';
@@ -34,7 +35,25 @@ import { createRazorpayOrder, verifyRazorpaySignature, getRazorpayKey } from './
 import { createShiprocketShipment, getShiprocketTracking } from './shiprocket.js';
 
 const app = express();
+app.use(compression());
 app.use(express.json({limit: process?.env?.API_PAYLOAD_MAX_SIZE || "7mb"}));
+
+// --- Caching layer for High Concurrency ---
+let cachePurohits = null;
+let cachePurohitsTime = 0;
+let cacheClasses = null;
+let cacheClassesTime = 0;
+const CACHE_TTL = 60000; // 60 seconds (1 minute) for production scale
+
+export function invalidatePurohitsCache() {
+  cachePurohits = null;
+  cachePurohitsTime = 0;
+}
+
+export function invalidateClassesCache() {
+  cacheClasses = null;
+  cacheClassesTime = 0;
+}
 
 const EMAIL_RELAY_URL = process.env.EMAIL_RELAY_URL || 'https://gurupadukam.com/email-relay.php';
 
@@ -1869,6 +1888,8 @@ app.post('/api/auth/profile/apply-purohit', authenticateToken, async (req, res) 
       console.error('[Purohit Apply Notification Failure]:', notifErr.message);
     }
 
+    invalidatePurohitsCache();
+    invalidatePurohitsCache();
     res.json({ message: 'Your Acharya application has been submitted successfully for verification! ✦' });
   } catch (err) {
     res.status(500).json({ error: 'Internal Error', message: err.message });
@@ -2081,8 +2102,28 @@ app.post('/api/products/:id/reviews', authenticateToken, async (req, res) => {
 // --- Notifications APIs for Admins ---
 app.get('/api/admin/notifications', authenticateToken, requireAdminOrSuper, async (req, res) => {
   try {
-    const notifications = await dbQuery("SELECT * FROM notifications ORDER BY created_at DESC");
+    const notifications = await dbQuery("SELECT * FROM notifications WHERE user_id IS NULL ORDER BY created_at DESC");
     res.json(notifications);
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
+// --- Personal Notifications APIs ---
+app.get('/api/notifications', authenticateToken, async (req, res) => {
+  try {
+    const notifications = await dbQuery("SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC", [req.user.id]);
+    res.json(notifications);
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
+app.put('/api/notifications/:id/read', authenticateToken, async (req, res) => {
+  const notificationId = req.params.id;
+  try {
+    await dbRun("UPDATE notifications SET \`read\` = 1 WHERE id = ? AND user_id = ?", [notificationId, req.user.id]);
+    res.json({ message: 'Notification marked as read successfully.' });
   } catch (err) {
     res.status(500).json({ error: 'Internal Error', message: err.message });
   }
@@ -2711,6 +2752,12 @@ app.put('/api/orders/:id/status', authenticateToken, requireSuperAdmin, async (r
         existing.customer_phone,
         reason
       );
+    } else if (status === 'Shipped') {
+      const smsText = `Hari Om ${existing.customer_name} ji! Your Gurupadukam order ${existing.id} has been shipped! Track your package and get ready to receive pure vedic samagri. 🌿`;
+      if (existing.customer_phone) {
+        sendSMSNotification(existing.customer_phone, smsText).catch(e => console.error(e));
+        sendWhatsAppNotification(existing.customer_phone, smsText).catch(e => console.error(e));
+      }
     }
 
     res.json({ message: 'Order shipment status updated successfully.' });
@@ -3060,6 +3107,10 @@ app.put('/api/admin/users/:id/block', authenticateToken, requireSuperAdmin, asyn
       }
     }
     
+    invalidatePurohitsCache();
+    invalidateClassesCache();
+    invalidatePurohitsCache();
+    invalidateClassesCache();
     res.json({ message: `User account successfully ${isBlocked ? 'suspended' : 'activated'}.` });
   } catch (err) {
     res.status(500).json({ error: 'Internal Error', message: err.message });
@@ -3107,6 +3158,10 @@ app.delete('/api/admin/users/:id', authenticateToken, requireSuperAdmin, async (
     `;
     sendEmailNotification(user.email, subject, htmlContent);
     
+    invalidatePurohitsCache();
+    invalidateClassesCache();
+    invalidatePurohitsCache();
+    invalidateClassesCache();
     res.json({ message: 'Registration request successfully declined and user records removed.' });
   } catch (err) {
     res.status(500).json({ error: 'Internal Error', message: err.message });
@@ -3180,6 +3235,10 @@ app.put('/api/admin/users/:id/role', authenticateToken, requireSuperAdmin, async
       }
     }
 
+    invalidatePurohitsCache();
+    invalidateClassesCache();
+    invalidatePurohitsCache();
+    invalidateClassesCache();
     res.json({ message: 'User role and location updated successfully.', role, location: assignedLocation });
   } catch (err) {
     res.status(500).json({ error: 'Internal Error', message: err.message });
@@ -3274,8 +3333,14 @@ app.delete('/api/admin/hubs/:id', authenticateToken, requireAdminOrSuper, async 
 // --- 7. Gurukulam Classes APIs ---
 // --- 7. Gurukulam Classes APIs & Session Proposals ---
 app.get('/api/classes', async (req, res) => {
+  const now = Date.now();
+  if (cacheClasses && (now - cacheClassesTime < CACHE_TTL)) {
+    return res.json(cacheClasses);
+  }
   try {
     const classes = await dbQuery("SELECT * FROM classes WHERE status = 'approved'");
+    cacheClasses = classes;
+    cacheClassesTime = now;
     res.json(classes);
   } catch (err) {
     res.status(500).json({ error: 'Internal Error', message: err.message });
@@ -3296,6 +3361,7 @@ app.post('/api/classes', authenticateToken, requireAdminOrSuperOrPurohit, async 
       [classId, title, instructor_name, time, Number(fee), image, description, status, req.user.name, req.user.location || 'Hub Location', video_url || null]
     );
 
+    invalidateClassesCache();
     res.status(201).json({ 
       message: req.user.role === 'super_admin' 
         ? 'Gurukulam class batch added successfully.' 
@@ -3459,6 +3525,8 @@ app.post('/api/admin/classes/:id/approve', authenticateToken, requireAdminOrSupe
       [notifId, `Session Approved`, `The training/recitation session "${cls.title}" proposed by ${cls.proposer_name || 'Admin'} was successfully approved and added to the calendar.`]
     );
 
+    invalidateClassesCache();
+    invalidateClassesCache();
     res.json({ message: 'Proposed sessional cohort approved and live on the calendar successfully! ✦' });
   } catch (err) {
     res.status(500).json({ error: 'Internal Error', message: err.message });
@@ -3470,6 +3538,8 @@ app.post('/api/admin/classes/:id/reject', authenticateToken, requireAdminOrSuper
   const classId = req.params.id;
   try {
     await dbRun("DELETE FROM classes WHERE id = ?", [classId]);
+    invalidateClassesCache();
+    invalidateClassesCache();
     res.json({ message: 'Proposed sessional cohort rejected and deleted successfully.' });
   } catch (err) {
     res.status(500).json({ error: 'Internal Error', message: err.message });
@@ -3494,6 +3564,8 @@ app.post('/api/admin/classes/:id/unapprove', authenticateToken, requireAdminOrSu
       [notifId, `Session Unapproved`, `The training/recitation session "${cls.title}" has been unapproved and returned to the review queue.`]
     );
 
+    invalidateClassesCache();
+    invalidateClassesCache();
     res.json({ message: 'Session successfully unapproved and moved back to pending queue. ✦' });
   } catch (err) {
     res.status(500).json({ error: 'Internal Error', message: err.message });
@@ -3530,6 +3602,7 @@ app.put('/api/classes/:id', authenticateToken, requireAdminOrSuperOrPurohit, asy
       [title, instructor_name, time, Number(fee), image, description, newStatus, req.user.name, video_url || null, classId]
     );
 
+    invalidateClassesCache();
     res.json({
       message: (req.user.role === 'super_admin' || req.user.role === 'admin')
         ? 'Gurukulam class details scheduled and updated successfully.'
@@ -3556,6 +3629,8 @@ app.delete('/api/classes/:id', authenticateToken, requireAdminOrSuperOrPurohit, 
     }
 
     await dbRun("DELETE FROM classes WHERE id = ?", [classId]);
+    invalidateClassesCache();
+    invalidateClassesCache();
     res.json({ message: 'Class cohort successfully deleted.' });
   } catch (err) {
     res.status(500).json({ error: 'Internal Error', message: err.message });
@@ -3716,13 +3791,36 @@ async function triggerEventApprovedNotifications(event) {
 
 // --- 8. Vetted Purohits Booking APIs ---
 app.get('/api/purohits', async (req, res) => {
+  const now = Date.now();
+  if (cachePurohits && (now - cachePurohitsTime < CACHE_TTL)) {
+    return res.json(cachePurohits);
+  }
   try {
     const purohits = await dbQuery(`
-      SELECT p.* FROM purohits p
+      SELECT 
+        p.id, p.name, p.specialization, p.fee, p.image, p.location, p.bio, p.credentials, 
+        p.portfolio_images, p.email, p.phone, p.gov_id_type, p.gov_id_number, p.gov_id_image, 
+        p.experience_years, p.languages, p.is_verified, p.banner_image, p.teaching_interest, 
+        p.teaching_specialization, p.instructor_bio,
+        COALESCE(avg_rev.avg_rating, 5.0) AS rating,
+        COALESCE(cnt_book.bookings_count, 0) AS bookings_count
+      FROM purohits p
       JOIN users u ON p.id = u.id
+      LEFT JOIN (
+        SELECT purohit_id, AVG(rating) AS avg_rating 
+        FROM purohit_reviews 
+        GROUP BY purohit_id
+      ) avg_rev ON p.id = avg_rev.purohit_id
+      LEFT JOIN (
+        SELECT purohit_id, COUNT(*) AS bookings_count 
+        FROM purohit_bookings 
+        GROUP BY purohit_id
+      ) cnt_book ON p.id = cnt_book.purohit_id
       WHERE u.role = 'purohit' AND u.is_blocked = 0
-      ORDER BY p.rating DESC, p.bookings_count DESC
+      ORDER BY rating DESC, bookings_count DESC
     `);
+    cachePurohits = purohits;
+    cachePurohitsTime = now;
     res.json(purohits);
   } catch (err) {
     res.status(500).json({ error: 'Internal Error', message: err.message });
@@ -3732,7 +3830,17 @@ app.get('/api/purohits', async (req, res) => {
 app.get('/api/purohits/:id', async (req, res) => {
   try {
     const purohitId = req.params.id;
-    const purohit = await dbGet("SELECT * FROM purohits WHERE id = ?", [purohitId]);
+    const purohit = await dbGet(`
+      SELECT 
+        p.id, p.name, p.specialization, p.fee, p.image, p.location, p.bio, p.credentials, 
+        p.portfolio_images, p.email, p.phone, p.gov_id_type, p.gov_id_number, p.gov_id_image, 
+        p.experience_years, p.languages, p.is_verified, p.banner_image, p.teaching_interest, 
+        p.teaching_specialization, p.instructor_bio,
+        COALESCE((SELECT AVG(rating) FROM purohit_reviews WHERE purohit_id = p.id), 5.0) AS rating,
+        COALESCE((SELECT COUNT(*) FROM purohit_bookings WHERE purohit_id = p.id), 0) AS bookings_count
+      FROM purohits p
+      WHERE p.id = ?
+    `, [purohitId]);
     if (!purohit) {
       return res.status(404).json({ error: 'Not Found', message: 'Priest not found.' });
     }
@@ -3839,6 +3947,8 @@ app.put('/api/purohits/:id', authenticateToken, async (req, res) => {
       ]
     );
 
+    invalidatePurohitsCache();
+    invalidatePurohitsCache();
     res.json({ success: true, message: '✦ Profile modified successfully! ✦' });
   } catch (err) {
     res.status(500).json({ error: 'Internal Error', message: err.message });
@@ -3846,22 +3956,41 @@ app.put('/api/purohits/:id', authenticateToken, async (req, res) => {
 });
 
 app.post('/api/purohits', authenticateToken, requireAdminOrSuper, async (req, res) => {
-  const { name, specialization, fee, image, location } = req.body;
-  if (!name || !specialization || !location) {
-    return res.status(400).json({ error: 'Bad Request', message: 'Purohit Name, Specialization, and Location are required.' });
+  const { name, specialization, fee, image, location, phone } = req.body;
+  if (!name || !specialization || !location || !phone) {
+    return res.status(400).json({ error: 'Bad Request', message: 'Purohit Name, Phone, Specialization, and Location are required.' });
   }
 
   try {
+    const cleanPhone = normalizePhone(phone);
+    
+    // Check if phone already exists
+    const existingUser = await dbGet("SELECT id FROM users WHERE phone = ?", [cleanPhone]);
+    if (existingUser) {
+      return res.status(400).json({ error: 'Bad Request', message: 'User with this phone number already exists.' });
+    }
+
     const id = 'purohit-' + Math.random().toString(36).substr(2, 9);
-    const details = { id, name, specialization, fee: fee || 0, image: image || '', location };
+    const userId = 'usr-' + Math.random().toString(36).substr(2, 9);
+    const details = { id, name, specialization, fee: fee || 0, image: image || '', location, phone: cleanPhone };
 
     if (req.user.role === 'super_admin') {
-      // Commit directly
+      const generatedPass = await bcrypt.hash(Math.random().toString(36), 10);
+      const regEmail = `${cleanPhone}@phone.user`;
+      
+      // Create the user account for login
       await dbRun(
-        `INSERT INTO purohits (id, name, specialization, rating, fee, image, location, bookings_count)
-         VALUES (?, ?, ?, 5.0, ?, ?, ?, 0)`,
-        [id, name, specialization, fee || 0, image || '', location]
+        "INSERT INTO users (id, name, email, password_hash, phone, role, is_blocked) VALUES (?, ?, ?, ?, ?, 'purohit', 0)",
+        [userId, name, regEmail, generatedPass, cleanPhone]
       );
+      
+      // Create the purohit profile (linking via the same ID for simplicity, or we can just use the userId as purohitId)
+      await dbRun(
+        `INSERT INTO purohits (id, name, specialization, rating, fee, image, location, bookings_count, phone)
+         VALUES (?, ?, ?, 5.0, ?, ?, ?, 0, ?)`,
+        [id, name, specialization, fee || 0, image || '', location, cleanPhone]
+      );
+      invalidatePurohitsCache();
       return res.status(201).json({ message: 'Purohit created successfully.', purohit: details });
     } else {
       // Create proposal queue item
@@ -3887,7 +4016,18 @@ app.post('/api/purohits', authenticateToken, requireAdminOrSuper, async (req, re
 app.get('/api/admin/welfare', authenticateToken, requireAdminOrSuper, async (req, res) => {
   try {
     // Return a clean directory with bookings count only, no welfare balances
-    const purohits = await dbQuery("SELECT id, name, location, bookings_count, fee FROM purohits ORDER BY bookings_count DESC");
+    const purohits = await dbQuery(`
+      SELECT 
+        p.id, p.name, p.location, p.fee,
+        COALESCE(cnt_book.bookings_count, 0) AS bookings_count
+      FROM purohits p
+      LEFT JOIN (
+        SELECT purohit_id, COUNT(*) AS bookings_count 
+        FROM purohit_bookings 
+        GROUP BY purohit_id
+      ) cnt_book ON p.id = cnt_book.purohit_id
+      ORDER BY bookings_count DESC
+    `);
     const ledger = purohits.map(p => {
       return {
         id: p.id,
@@ -3907,7 +4047,7 @@ app.get('/api/admin/welfare', authenticateToken, requireAdminOrSuper, async (req
 
 app.post('/api/purohits/:id/book', authenticateToken, async (req, res) => {
   const purohitId = req.params.id;
-  const { poojaType, bookingDate, timeSlot, ritualMode, email } = req.body;
+  const { poojaType, bookingDate, endDate, timeSlot, ritualMode, email } = req.body;
   let { address } = req.body;
   
   if (ritualMode === 'Online' && !address) {
@@ -3923,6 +4063,9 @@ app.post('/api/purohits/:id/book', authenticateToken, async (req, res) => {
     if (!purohit) {
       return res.status(404).json({ error: 'Not Found', message: 'Purohit not found.' });
     }
+
+    // We previously rejected conflicts here. Now we allow overlapping bookings to be created 
+    // in 'Pending_Acharya_Confirmation' state so the Purohit can manually choose which one to accept.
 
     const defaultChecklist = poojaType === 'Vivaham' 
       ? [
@@ -3953,20 +4096,30 @@ app.post('/api/purohits/:id/book', authenticateToken, async (req, res) => {
     const bookingId = 'bk-' + Math.random().toString(36).substr(2, 9);
     
     await dbRun(
-      `INSERT INTO purohit_bookings (id, purohit_id, user_id, pooja_type, booking_date, time_slot, address, status, items, secure_deposit, ritual_mode, google_meet_link)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending_Acharya_Confirmation', ?, 0, ?, ?)`,
-      [bookingId, purohitId, req.user.id, poojaType, bookingDate, timeSlot, address, JSON.stringify(defaultChecklist), mode, null]
+      `INSERT INTO purohit_bookings (id, purohit_id, user_id, pooja_type, booking_date, time_slot, address, status, items, secure_deposit, ritual_mode, google_meet_link, end_date)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending_Acharya_Confirmation', ?, 0, ?, ?, ?)`,
+      [bookingId, purohitId, req.user.id, poojaType, bookingDate, timeSlot, address, JSON.stringify(defaultChecklist), mode, null, endDate || null]
     );
 
     // Increment bookings count
     await dbRun("UPDATE purohits SET bookings_count = bookings_count + 1 WHERE id = ?", [purohitId]);
 
     // Send a notification to Admin
-    const notifId = 'notif-' + Math.random().toString(36).substr(2, 9);
+    const notifIdAdmin = 'notif-' + Math.random().toString(36).substr(2, 9);
     await dbRun(
       `INSERT INTO notifications (id, title, \`desc\`, \`read\`) VALUES (?, ?, ?, 0)`,
-      [notifId, `New Purohit Booking`, `Purohit booking ${bookingId} placed by ${req.user.name} for ${poojaType} on ${bookingDate}.`]
+      [notifIdAdmin, `New Purohit Booking`, `Purohit booking ${bookingId} placed by ${req.user.name} for ${poojaType} on ${bookingDate}.`]
     );
+
+    // Send personalized notification to the Priest
+    const priestUserRec = await dbGet("SELECT id, email, phone FROM users WHERE id = ?", [purohitId]);
+    if (priestUserRec) {
+      const notifIdPriest = 'notif-' + Math.random().toString(36).substr(2, 9);
+      await dbRun(
+        `INSERT INTO notifications (id, user_id, title, \`desc\`, \`read\`) VALUES (?, ?, ?, ?, 0)`,
+        [notifIdPriest, priestUserRec.id, `✦ Missed Alert: New ${poojaType} Booking`, `Devotee ${req.user.name} booked a session for ${bookingDate} at ${timeSlot}. Location: ${address}. Please confirm.`]
+      );
+    }
 
     // Send Booking Notification Email & SMS to Priest only (Devotee gets notified on Confirmation)
     try {
@@ -4051,6 +4204,7 @@ app.post('/api/purohits/:id/book', authenticateToken, async (req, res) => {
       console.error('[Notification Dispatch Failed on Booking Request]:', notifErr.message);
     }
 
+    invalidatePurohitsCache();
     res.status(201).json({ 
       message: 'Purohit booking requested! Awaiting Acharya confirmation.', 
       bookingId
@@ -4336,6 +4490,21 @@ app.post('/api/quotes/:id/accept', authenticateToken, async (req, res) => {
     const timeSlot = '09:00 AM - 11:30 AM';
     const address = quote.details;
     const purohitId = quote.purohit_id || 'purohit-1'; // fallback
+
+    // Check for booking slot conflicts before accepting quote and auto-creating booking
+    const conflict = await dbGet(
+      `SELECT id FROM purohit_bookings 
+       WHERE purohit_id = ? AND booking_date = ? AND time_slot = ? 
+       AND status IN ('Pending_Acharya_Confirmation', 'Confirmed')`,
+      [purohitId, bookingDate, timeSlot]
+    );
+
+    if (conflict) {
+      return res.status(409).json({ 
+        error: 'Conflict', 
+        message: 'This Purohit has already been booked for the date and time slot of this quotation. Sibling bid acceptance is not possible.' 
+      });
+    }
 
     const defaultChecklist = [
       { id: 'item-1', name: 'Complete 5-in-1 Puja Combo Kit', quantity: 1, price: 599, isStoreProduct: true, storeProductId: 'p6' },
@@ -5059,11 +5228,24 @@ app.post('/api/purohits/:id/reviews', authenticateToken, async (req, res) => {
 
   try {
     const booking = await dbGet(
-      "SELECT id FROM purohit_bookings WHERE id = ? AND user_id = ? AND purohit_id = ?",
+      "SELECT id, status, booking_date FROM purohit_bookings WHERE id = ? AND user_id = ? AND purohit_id = ?",
       [bookingId, req.user.id, purohitId]
     );
     if (!booking) {
       return res.status(403).json({ error: 'Forbidden', message: 'Only the devotee who booked this priest can submit a review.' });
+    }
+
+    if (booking.status !== 'Confirmed') {
+      return res.status(400).json({ error: 'Bad Request', message: 'Reviews can only be submitted for confirmed bookings.' });
+    }
+
+    const bookingDate = new Date(booking.booking_date);
+    const today = new Date();
+    bookingDate.setHours(0, 0, 0, 0);
+    today.setHours(0, 0, 0, 0);
+
+    if (today < bookingDate) {
+      return res.status(400).json({ error: 'Bad Request', message: 'Reviews can only be submitted on or after the scheduled pooja date.' });
     }
 
     const reviewId = 'rev-' + Math.random().toString(36).substr(2, 9);
@@ -5082,6 +5264,7 @@ app.post('/api/purohits/:id/reviews', authenticateToken, async (req, res) => {
       await dbRun("UPDATE purohits SET rating = ? WHERE id = ?", [avgObj.avg, purohitId]);
     }
 
+    invalidatePurohitsCache();
     res.status(201).json({ message: '✦ Review logged successfully! Thank you for the feedback. ✦', reviewId });
   } catch (err) {
     res.status(500).json({ error: 'Internal Error', message: err.message });
