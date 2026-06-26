@@ -75,10 +75,10 @@ export const createShiprocketShipment = async (order) => {
     const token = await getShiprocketToken();
     if (!token) throw new Error('Could not retrieve auth token');
 
-    // Format items as required by Shiprocket API
+    // Format items as required by Shiprocket API (supports both cart items and order items database models)
     const orderItems = order.items.map(item => ({
-      name: item.product_name,
-      sku: item.product_id,
+      name: item.name || item.product_name || 'Pooja Item',
+      sku: item.id || item.product_id || 'SKU_MOCK',
       units: item.quantity,
       selling_price: item.price,
       discount: 0,
@@ -108,7 +108,7 @@ export const createShiprocketShipment = async (order) => {
       length: 15,
       width: 15,
       height: 10,
-      weight: 0.5 // Standard package weight in kg
+      weight: (order.items.reduce((sum, item) => sum + (item.quantity || item.units || 1), 0) * 200 + 50) / 1000
     };
 
     const response = await fetch('https://apiv2.shiprocket.in/v1/external/orders/create/adhoc', {
