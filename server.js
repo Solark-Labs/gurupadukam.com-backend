@@ -38,6 +38,11 @@ const app = express();
 app.use(compression());
 app.use(express.json({limit: process?.env?.API_PAYLOAD_MAX_SIZE || "7mb"}));
 
+// Serve static frontend assets (images, logo) so production and dev both find images
+const FRONTEND_PUBLIC = path.resolve(__dirname, '..', 'frontend', 'public');
+app.use('/images', express.static(path.join(FRONTEND_PUBLIC, 'images'), { maxAge: '7d', etag: true }));
+app.use('/gurupadukam_logo.png', express.static(path.join(FRONTEND_PUBLIC, 'gurupadukam_logo.png'), { maxAge: '7d' }));
+
 // --- Caching layer for High Concurrency ---
 let cachePurohits = null;
 let cachePurohitsTime = 0;
