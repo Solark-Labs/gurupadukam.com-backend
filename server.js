@@ -976,6 +976,47 @@ app.post('/api/auth/register', async (req, res) => {
         [notifId, `New ${roleLabel} Registration Pending`, `Account registered by ${name} (${email}) for the ${targetLocation} hub is pending Super-Admin activation.`]
       );
 
+      // Trigger one-click activation alert email to Super-Admin
+      const adminEmail = 'reach@gurupadukam.com';
+      const adminSubject = `🚨 ACTION REQUIRED: New ${roleLabel} Onboarding Request - ${name}`;
+      const approvalSecret = process.env.ADMIN_APPROVAL_SECRET || 'gurupadukam_approval_secret_123';
+      const approvalUrl = `https://gurupadukam-com-backend-n1wlaxk8x-gurupadukam.vercel.app/api/admin/users/${userId}/approve-email?token=${approvalSecret}`;
+      
+      const adminHtmlContent = `
+        <div style="font-family: Arial, sans-serif; padding: 25px; border: 2px solid #5C0A20; border-radius: 12px; max-width: 650px; background-color: #FCFBF8; margin: auto;">
+          <h2 style="color: #5C0A20; text-align: center; border-bottom: 2px solid #C9943A; padding-bottom: 12px;">gurupadukam.com Admin Portal</h2>
+          <p style="font-size: 15px; color: #1A1A1A; font-weight: bold;">New Onboarding Application Received</p>
+          <p style="font-size: 13px; color: #333; line-height: 1.6;">A new partner has registered and requires your vetting and approval to go live in the platform directory.</p>
+          
+          <div style="background-color: rgba(92,10,32,0.05); border-left: 4px solid #5C0A20; padding: 15px; margin: 20px 0; border-radius: 4px; font-size: 13px;">
+            <strong style="color: #5C0A20; font-size: 14px; display: block; margin-bottom: 8px;">Applicant Onboarding Details:</strong>
+            <table style="width: 100%; border-collapse: collapse;">
+              <tr><td style="padding: 4px 0; width: 140px;"><strong>Name:</strong></td><td>${name}</td></tr>
+              <tr><td style="padding: 4px 0;"><strong>Email:</strong></td><td>${email}</td></tr>
+              <tr><td style="padding: 4px 0;"><strong>Phone:</strong></td><td>${phone}</td></tr>
+              <tr><td style="padding: 4px 0;"><strong>Role Selected:</strong></td><td>${roleLabel}</td></tr>
+              <tr><td style="padding: 4px 0;"><strong>Location/Hub:</strong></td><td>${targetLocation}</td></tr>
+              ${targetRole === 'purohit' ? `
+                <tr><td style="padding: 4px 0;"><strong>Specialization & Exp:</strong></td><td>${specialization || 'N/A'}</td></tr>
+                <tr><td style="padding: 4px 0;"><strong>Requested Fee:</strong></td><td>₹${fee || '3500'}</td></tr>
+                <tr><td style="padding: 4px 0;"><strong>Gov ID Type:</strong></td><td>${govIdType || 'Aadhaar Card'}</td></tr>
+                <tr><td style="padding: 4px 0;"><strong>Gov ID Number:</strong></td><td>${govIdNumber || 'N/A'}</td></tr>
+                <tr><td style="padding: 4px 0;"><strong>Gov ID Photo:</strong></td><td><a href="${govIdImage}" style="color: #5C0A20; font-weight: bold; text-decoration: underline;" target="_blank">View ID Document</a></td></tr>
+              ` : ''}
+            </table>
+          </div>
+          
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${approvalUrl}" style="background-color: #2e7d32; color: #FCFBF8; padding: 14px 30px; text-decoration: none; font-weight: bold; border-radius: 8px; font-size: 14px; display: inline-block; box-shadow: 0 4px 10px rgba(46,125,50,0.3);">Approve & Activate Account</a>
+            <p style="font-size: 11px; color: #777; margin-top: 10px;">Clicking this button will unblock the user and notify them via Email/SMS immediately.</p>
+          </div>
+          
+          <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
+          <p style="font-size: 10px; color: #999; text-align: center;">This is an automated administrative notification. Please verify all identity documents before activation.</p>
+        </div>
+      `;
+      sendEmailNotification(adminEmail, adminSubject, adminHtmlContent);
+
       return res.status(201).json({
         pendingApproval: true,
         message: `Your registration request as a ${roleLabel} was submitted successfully! Your account will be activated once it is approved by the Super Admin.`
@@ -3088,6 +3129,75 @@ app.put('/api/admin/users/:id/block', authenticateToken, requireSuperAdmin, asyn
     res.json({ message: `User account successfully ${isBlocked ? 'suspended' : 'activated'}.` });
   } catch (err) {
     res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
+// Secure GET endpoint for email-based direct activation by Super-Admin
+app.get('/api/admin/users/:id/approve-email', async (req, res) => {
+  const { token } = req.query;
+  const adminSecret = process.env.ADMIN_APPROVAL_SECRET || 'gurupadukam_approval_secret_123';
+  if (token !== adminSecret) {
+    return res.status(403).send('<h3 style="color:red; font-family:sans-serif; text-align:center; margin-top:50px;">Forbidden: Invalid approval token.</h3>');
+  }
+
+  const userId = req.params.id;
+  try {
+    const targetUser = await dbGet("SELECT * FROM users WHERE id = ?", [userId]);
+    if (!targetUser) {
+      return res.status(404).send('<h3 style="color:red; font-family:sans-serif; text-align:center; margin-top:50px;">User not found.</h3>');
+    }
+
+    await dbRun("UPDATE users SET is_blocked = 0 WHERE id = ?", [userId]);
+    if (targetUser.role === 'purohit') {
+      await dbRun("UPDATE registration_payments SET payment_status = 'success' WHERE user_id = ?", [userId]);
+    }
+
+    // Send activation notification email to user
+    const subject = `✦ Your Gurupadukam Partner Profile has been Activated! ✦`;
+    const htmlContent = `
+      <div style="font-family: Arial, sans-serif; padding: 25px; border: 2px solid #C9943A; border-radius: 12px; max-width: 600px; background-color: #FCFBF8; margin: auto;">
+        <h2 style="color: #5C0A20; text-align: center; border-bottom: 2px solid #C9943A; padding-bottom: 12px;">gurupadukam.com</h2>
+        <p style="font-size: 16px; color: #1A1A1A; font-weight: bold;">Dear ${targetUser.name},</p>
+        <p style="font-size: 14px; color: #333; line-height: 1.6;">We are pleased to inform you that your administrative role request as a <strong>${targetUser.role.toUpperCase()}</strong> has been reviewed, approved, and activated by the platform's Super Administrator!</p>
+        
+        <div style="background-color: rgba(201,148,58,0.1); border-left: 4px solid #C9943A; padding: 15px; margin: 20px 0; border-radius: 4px;">
+          <strong style="color: #5C0A20; font-size: 14px;">Activated Administrative Details:</strong>
+          <ul style="margin: 8px 0 0 0; padding-left: 20px; font-size: 13px; color: #555; line-height: 1.5;">
+            <li><strong>Role Desk:</strong> ${targetUser.role === 'purohit' ? 'Vetted Acharya (Priest)' : targetUser.role === 'admin' ? 'Hub Partner' : 'Cottage Artisan'}</li>
+            <li><strong>Assigned Location:</strong> ${targetUser.location || 'All Hubs'}</li>
+            <li><strong>Status:</strong> Active & Live 🟢</li>
+          </ul>
+        </div>
+        
+        <p style="font-size: 14px; color: #333; line-height: 1.6;">You can now log in using your registered credentials to access your professional dashboard, sync inventory catalogue items, view bookings, and manage welfare ledger accounts.</p>
+        <div style="text-align: center; margin: 25px 0;">
+          <a href="https://gurupadukam.com/login" style="background-color: #5C0A20; color: #FCFBF8; padding: 12px 25px; text-decoration: none; font-weight: bold; border-radius: 6px; font-size: 14px; display: inline-block;">Login to Partner Workspace</a>
+        </div>
+        
+        <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
+        <p style="font-size: 11px; color: #777; text-align: center; font-style: italic;">Thank you for your service and partnership in sustaining Vedic heritage and cottage arts.</p>
+        <p style="font-size: 9px; color: #999; text-align: center; margin-top: 10px;">© gurupadukam.com. All rights reserved.</p>
+      </div>
+    `;
+    sendEmailNotification(targetUser.email, subject, htmlContent);
+    if (targetUser.phone) {
+      sendSMSNotification(targetUser.phone, `Hari Om ${targetUser.name}! Your Gurupadukam partner profile as a ${targetUser.role.toUpperCase()} has been approved and activated by the Super-Admin. Access your dashboard at gurupadukam.com/login ✦`);
+    }
+
+    invalidatePurohitsCache();
+    invalidateClassesCache();
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(`
+      <div style="font-family: sans-serif; text-align: center; padding: 50px; border: 1px solid #ddd; max-width: 500px; margin: 50px auto; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); background-color: #fafafa;">
+        <h2 style="color: #2e7d32; margin-bottom: 15px;">Account Approved Successfully ✦</h2>
+        <p style="color: #555; line-height: 1.5; font-size: 14px;">The registration profile for <b>${targetUser.name} (${targetUser.email})</b> has been successfully verified, unblocked, and activated.</p>
+        <p style="color: #777; font-size: 12px; margin-bottom: 25px;">An email/SMS notification has been triggered to the user.</p>
+        <a href="https://gurupadukam.com" style="background-color: #5C0A20; color: white; padding: 10px 20px; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: bold; display: inline-block;">Go to gurupadukam.com</a>
+      </div>
+    `);
+  } catch (err) {
+    res.status(500).send('Internal Server Error: ' + err.message);
   }
 });
 
