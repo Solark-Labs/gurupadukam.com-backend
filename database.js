@@ -6,204 +6,6 @@ import bcrypt from 'bcryptjs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const initialProducts = [
-  {
-    id: 'p1',
-    name: 'Organic Pasupu (Turmeric)',
-    name_te: 'ఆర్గానిక్ పసుపు (100% స్వచ్ఛమైనది)',
-    price: 99,
-    original_price: 150,
-    category: 'powder',
-    image: '/images/products/pasupu.png',
-    description: '✦ Consecrated Scripture Shloka\n"హరిద్రాం ధారయేద్దేవీం సంపదం సౌభాగ్య దాయినీమ్।సర్వ దారిద్ర్య నాశినీం గౌరీం త్వాం నమామ్యహమ్॥"\n\nTraditionally hand-ground using stone cylinders to retain all natural oils and color. Safe and highly sacred for home thresholds and pujas.',
-    stock: 50,
-    badge: 'ORGANIC',
-    is_organic: 1
-  },
-  {
-    id: 'p2',
-    name: 'Organic Kumkuma',
-    name_te: 'స్వచ్ఛమైన కుంకుమ',
-    price: 149,
-    original_price: 199,
-    category: 'powder',
-    image: '/images/products/kumkum.png',
-    description: '✦ Consecrated Scripture Shloka\n"లక్ష్మీ శ్రేష్ఠాం సతీం దేవీం సర్వ మంగళ దాయినీమ్।కుంకుమేనార్చయామ్యద్య త్వాం నమామి హరిప్రియే॥"\n\nHandcrafted using the ancient process: 100% pure premium Kumkum stones are ground with turmeric horns for a chemical-free, natural red powder. Balances energies and wards off negative vibrations.',
-    stock: 50,
-    badge: 'PURE',
-    is_organic: 1
-  },
-  {
-    id: 'p3',
-    name: 'Holy Vibhuti',
-    name_te: 'పవిత్రమైన విభూది',
-    price: 49,
-    original_price: 75,
-    category: 'powder',
-    image: '/images/products/vibhuti.png',
-    description: '✦ Consecrated Scripture Shloka\n"భస్మధారణాత్ సర్వసౌఖ్యమస్తు॥"\n\nSacred ash created by burning pure cow dung with herbs. Cools the forehead, settles the nervous system, and symbolizes absolute surrender to the formless Divine.',
-    stock: 100,
-    badge: 'HOLY',
-    is_organic: 1
-  },
-  {
-    id: 'p4',
-    name: 'Pooja Trio Pack (All 3)',
-    name_te: 'పూజా ట్రియో ప్యాక్ (పసుపు + కుంకుమ + విభూది)',
-    price: 279,
-    original_price: 297,
-    category: 'combo',
-    image: '/images/products/trio_pack.png',
-    description: '✦ Special Bundle Pack ✦\nIncludes our 100% Organic Pasupu, Pure Kumkuma, and Holy Vibhuti jars at a special discounted offer price. Ideal for daily rituals and home shrines.',
-    stock: 30,
-    badge: 'SPECIAL OFFER',
-    is_organic: 1
-  },
-  {
-    id: 'p5',
-    name: 'Agarbatti & Dhoop',
-    name_te: 'అగరబత్తులు & ధూపం',
-    price: 99,
-    original_price: 149,
-    category: 'incense',
-    image: '/images/products/agarbatti.png',
-    description: 'Premium pure incense sticks hand-rolled by remote village artisans using natural gums, resins, and organic flower dust.',
-    stock: 60,
-    badge: 'COTTAGE CRAFT',
-    is_organic: 1
-  },
-  {
-    id: 'p6',
-    name: 'Swachha Camphor (Karpuram)',
-    name_te: 'కర్పూరం (స్వచ్ఛమైనది)',
-    price: 99,
-    original_price: 120,
-    category: 'camphor',
-    image: '/images/products/karpuram.png',
-    description: '100% pure organic camphor flakes. Ignites instantly with a bright flame, leaving zero residue, purifying the atmosphere with its divine aroma.',
-    stock: 40,
-    badge: 'PURE',
-    is_organic: 1
-  },
-  {
-    id: 'p7',
-    name: 'Wicks & Ghee Diya Samagri',
-    name_te: 'వత్తులు & నెయ్యి దీప సామగ్రి',
-    price: 79,
-    original_price: 99,
-    category: 'diya',
-    image: '/images/products/wicks.png',
-    description: 'High-quality cotton wicks bundled with premium cow ghee, ideal for lighting lamps during daily sandhyavandanam and pujas.',
-    stock: 80,
-    badge: 'ESSENTIAL',
-    is_organic: 0
-  },
-  {
-    id: 'p8',
-    name: 'Gandham (Sandalwood)',
-    name_te: 'గంధం / చందనం',
-    price: 249,
-    original_price: 320,
-    category: 'powder',
-    image: '/images/products/gandham.png',
-    description: '✦ Consecrated Scripture Shloka\n"చందనస్య మహత్పుణ్యం పవిత్రం పాపనాశనమ్॥"\n\nAuthentic sandalwood paste possessing cooling and anti-inflammatory properties, providing mental clarity and spiritual tranquility.',
-    stock: 15,
-    badge: 'LIMITED',
-    is_organic: 0
-  },
-  {
-    id: 'p9',
-    name: 'Pooja Oils (Neyyi & Sesame)',
-    name_te: 'పూజా నూనెలు (నెయ్యి & నువ్వుల నూనె)',
-    price: 180,
-    original_price: 220,
-    category: 'oil',
-    image: '/images/products/pooja_oil.png',
-    description: 'Premium sesame oil and pure cow ghee blended specifically for lamp lighting to create a soothing, smoke-free atmosphere.',
-    stock: 35,
-    badge: 'ESSENTIAL',
-    is_organic: 0
-  },
-  {
-    id: 'p10',
-    name: 'Complete Puja Combo Kit',
-    name_te: 'పూజా కిట్లు (5-in-1)',
-    price: 699,
-    original_price: 825,
-    category: 'combo',
-    image: '/images/products/combo_kit.png',
-    description: '5 essential sacred items elegantly packaged in a traditional gift box. Perfect for festivals, housewarmings, or as a holy gift.',
-    stock: 20,
-    badge: 'BEST VALUE',
-    is_organic: 0
-  },
-  {
-    id: 'p11',
-    name: 'Coconuts, Betel leaves & Betel nuts',
-    name_te: 'కొబ్బరికాయలు, తమలపాకులు & వక్కలు',
-    price: 150,
-    original_price: 180,
-    category: 'fresh',
-    image: '/images/products/coconut.png',
-    description: 'Fresh organic coconuts selected for ritual purity, bundled with fresh betel leaves and premium betel nuts (tambulam).',
-    stock: 25,
-    badge: 'FRESH',
-    is_organic: 1
-  },
-  {
-    id: 'p12',
-    name: 'Kalasha Samagri',
-    name_te: 'కలశ సామగ్రి',
-    price: 120,
-    original_price: 150,
-    category: 'ritual',
-    image: '/images/products/kalasha.png',
-    description: 'Traditional items required for establishing the holy Kalash, including mango leaves, coconut, thread, and sacred coins.',
-    stock: 30,
-    badge: 'SACRED',
-    is_organic: 0
-  },
-  {
-    id: 'p13',
-    name: 'Homa Dravya Pack',
-    name_te: 'హోమ ద్రవ్యాలు',
-    price: 350,
-    original_price: 420,
-    category: 'ritual',
-    image: '/images/products/homa_dravya.png',
-    description: 'A comprehensive blend of 108 pure dry herbs, roots, grains, and woods required for performing sacred homams and havans.',
-    stock: 15,
-    badge: 'CONSECRATED',
-    is_organic: 1
-  },
-  {
-    id: 'p14',
-    name: 'Deity Decoration Samagri',
-    name_te: 'దేవతల అలంకరణ సామగ్రి',
-    price: 200,
-    original_price: 250,
-    category: 'decor',
-    image: '/images/products/decor.png',
-    description: 'Assorted floral garlands, deity garments (vastram), and decorative ornaments to beautify your home altar.',
-    stock: 40,
-    badge: 'BEAUTIFUL',
-    is_organic: 0
-  },
-  {
-    id: 'p15',
-    name: 'Pooja Utensils & Vessels',
-    name_te: 'పూజా పాత్రలు (ఇత్తడి & రాగి)',
-    price: 450,
-    original_price: 550,
-    category: 'utensils',
-    image: '/images/products/utensils.png',
-    description: 'Handcrafted pure brass and copper plates, cups, spoons, and lamps designed for ritual use.',
-    stock: 12,
-    badge: 'PREMIUM',
-    is_organic: 0
-  }
-];
-
 // Env config: Automatically detect if we are using Hostinger MySQL or Local SQLite
 const isMySQL = process.env.DB_TYPE === 'mysql' || !!process.env.MYSQL_HOST;
 
@@ -386,7 +188,6 @@ function initializeDatabaseSQLite() {
 
     db.run(`CREATE TABLE IF NOT EXISTS notifications (
       id TEXT PRIMARY KEY,
-      user_id TEXT,
       title TEXT NOT NULL,
       \`desc\` TEXT NOT NULL,
       \`read\` INTEGER DEFAULT 0,
@@ -453,10 +254,7 @@ function initializeDatabaseSQLite() {
       status TEXT DEFAULT 'Confirmed',
       items TEXT,
       items_purchased INTEGER DEFAULT 0,
-      secure_deposit REAL DEFAULT 0,
-      ritual_mode TEXT,
-      google_meet_link TEXT,
-      end_date TEXT
+      secure_deposit REAL DEFAULT 0
     )`);
 
     db.run(`CREATE TABLE IF NOT EXISTS purohit_posts (
@@ -625,7 +423,6 @@ function initializeDatabaseSQLite() {
     db.run(`ALTER TABLE queries ADD COLUMN is_private INTEGER DEFAULT 0`, (err) => {});
     db.run(`ALTER TABLE queries ADD COLUMN is_deleted INTEGER DEFAULT 0`, (err) => {});
     db.run(`ALTER TABLE queries ADD COLUMN deleted_by TEXT`, (err) => {});
-    db.run(`ALTER TABLE notifications ADD COLUMN user_id TEXT`, (err) => {});
     db.run(`ALTER TABLE replies ADD COLUMN original_content TEXT`, (err) => {});
     db.run(`ALTER TABLE replies ADD COLUMN is_edited INTEGER DEFAULT 0`, (err) => {});
     db.run(`ALTER TABLE users ADD COLUMN totp_secret TEXT`, (err) => {});
@@ -752,7 +549,6 @@ async function initializeDatabaseMySQL() {
     // Notifications Table (wrapping desc and read keywords in backticks)
     await mysqlPool.query(`CREATE TABLE IF NOT EXISTS notifications (
       id VARCHAR(255) PRIMARY KEY,
-      user_id VARCHAR(255),
       title VARCHAR(255) NOT NULL,
       \`desc\` TEXT NOT NULL,
       \`read\` INT DEFAULT 0,
@@ -822,10 +618,7 @@ async function initializeDatabaseMySQL() {
       status VARCHAR(50) DEFAULT 'Confirmed',
       items TEXT,
       items_purchased INT DEFAULT 0,
-      secure_deposit DECIMAL(10,2) DEFAULT 0,
-      ritual_mode VARCHAR(50),
-      google_meet_link VARCHAR(255),
-      end_date VARCHAR(100)
+      secure_deposit DECIMAL(10,2) DEFAULT 0
     )`);
 
     // Purohit Posts Table
@@ -946,10 +739,6 @@ async function initializeDatabaseMySQL() {
 
     try {
       await mysqlPool.query(`ALTER TABLE purohit_bookings ADD COLUMN google_meet_link VARCHAR(500)`);
-    } catch (e) {}
-
-    try {
-      await mysqlPool.query(`ALTER TABLE notifications ADD COLUMN user_id VARCHAR(255)`);
     } catch (e) {}
 
     try {
@@ -1251,12 +1040,15 @@ async function seedSettings() {
     const defaults = [
       { key: 'mfa_enforced', value: 'true' },
       { key: 'session_timeout', value: '24' },
-      { key: 'max_login_attempts', value: '5' }
+      { key: 'max_login_attempts', value: '5' },
+      { key: 'featured_occasion', value: 'Navaratri Special' },
+      { key: 'featured_priest_id', value: 'acharya_1' },
+      { key: 'featured_alert_message', value: 'Acharya Shri Ramakrishna Sharma is filling up fast for Maha Chandi Homas during Navaratri! Only 2 dates remaining. Book your auspicious slots now.' }
     ];
     for (const d of defaults) {
-      const existing = await dbGet("SELECT * FROM settings WHERE key = ?", [d.key]);
+      const existing = await dbGet("SELECT * FROM settings WHERE `key` = ?", [d.key]);
       if (!existing) {
-        await dbRun("INSERT INTO settings (key, value) VALUES (?, ?)", [d.key, d.value]);
+        await dbRun("INSERT INTO settings (`key`, value) VALUES (?, ?)", [d.key, d.value]);
       }
     }
     console.log('✦ Seeded security settings.');
@@ -1331,8 +1123,6 @@ async function seedUsers() {
       console.log('✦ 3 Location-based Admins seeded (Hyderabad, Bengaluru, Chennai).');
     }
 
-    // Delete old purohit users to avoid duplicates
-    await dbRun("DELETE FROM users WHERE role = 'purohit'");
     const passwordHash = await bcrypt.hash('admin123', 10);
     
     const purohitUsers = [
@@ -1344,10 +1134,19 @@ async function seedUsers() {
     ];
 
     for (const p of purohitUsers) {
-      await dbRun(
-        "INSERT INTO users (id, name, email, password_hash, role, phone, location) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [p.id, p.name, p.email, passwordHash, 'purohit', p.phone, p.location]
-      );
+      const existingUser = await dbGet("SELECT id FROM users WHERE id = ?", [p.id]);
+      if (!existingUser) {
+        try {
+          await dbRun(
+            "INSERT INTO users (id, name, email, password_hash, role, phone, location) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [p.id, p.name, p.email, passwordHash, 'purohit', p.phone, p.location]
+          );
+        } catch (insertErr) {
+          if (!insertErr.message.includes('Duplicate entry') && !insertErr.message.includes('UNIQUE constraint failed')) {
+            throw insertErr;
+          }
+        }
+      }
     }
     console.log('✦ Seeded 5 Vetted Priests in users table.');
   } catch (err) {
@@ -1357,233 +1156,111 @@ async function seedUsers() {
 
 async function seedProducts() {
   try {
-    const initialProducts = [
-      {
-        id: 'p1',
-        name: 'Organic Pasupu',
-        name_te: 'పసుపు (పచ్చ పసుపు)',
-        price: 149,
-        original_price: 199,
-        category: 'powder',
-        image: '/images/products/pasupu.png',
-        description: '✦ Consecrated Scripture Shloka\n"హరిద్రాం ధారయేద్దేవీం సంపదం సౌభాగ్య దాయినీమ్।సర్వ దారిద్ర్య నాశినీం గౌరీం త్వాం నమామ్యహమ్॥"\n\nతాత్పర్యము (Telugu Meaning):\n• హరిద్రాం ధారయేద్దేవీం: ఐశ్వర్యప్రదాత, దేవి స్వరూపమైన ఈ పసుపును ధరిస్తున్నాను. • సంపదం సౌభాగ్య దాయినీమ్: సంపదలను, దీర్ఘసుమంగళీత్వాన్ని (సౌభాగ్యాన్ని) ప్రసాదించే తల్లి. • సర్వ దారిద్ర్య నాశినీం: సమస్త ఆర్థిక, మానసిక దారిద్ర్యాలను/కష్టాలను నశింపజేసేది. • గౌరీం త్వాం నమామ్యహమ్: అటువంటి మంగళప్రదరాలైన గౌరీ దేవికి నేను నమస్కరిస్తున్నాను.\n\nScriptural Significance of Keeping It:\n100% pure organic turmeric powder, stone-ground. Traditionally hand-ground with stone cylinders to retain all natural oils and colors, safe and highly sacred for home thresholds and pujas.',
-        stock: 50,
-        badge: 'ORGANIC',
-        is_organic: 1
-      },
-      {
-        id: 'p2',
-        name: 'Organic Kumkum (200g)',
-        name_te: 'కుంకుమ',
-        price: 189,
-        original_price: 220,
-        category: 'powder',
-        image: '/images/products/kumkum.png',
-        description: '✦ Consecrated Scripture Shloka\n"లక్ష్మీ శ్రేష్ఠాం సతీం దేవీం సర్వ మంగళ దాయినీమ్।కుంకుమేనార్చయామ్యద్య త్వాం నమామి హరిప్రియే॥"\n\nతాత్పర్యము (Telugu Meaning):\n• లక్ష్మీ శ్రేష్ఠాం సతీం దేవీం: దేవేరులలో శ్రేష్ఠురాలైన, పరమ పతివ్రత అయిన ఓ లక్ష్మీదేవి! • సర్వ మంగళ దాయినీమ్: సమస్త శుభాలను, మంగళాలను ప్రసాదించే తల్లి! •కుంకుమేనార్చయామ్యద్య: ఈ పవిత్రమైన కుంకుమతో నిన్ను పూజిస్తూ (నా నుదుట) ధరిస్తున్నాను. • త్వాం నమామి హరిప్రియే: శ్రీమహావిష్ణువుకు అత్యంత ప్రియమైన ఓ జననీ! నీకు నమస్కరిస్తున్నాను.\n\nScriptural Significance of Keeping It:\nSourced from Telangana. Handcrafted using the original ancient process: 100% pure premium Kumkum stones are stone-ground along with yellow horns (turmeric horns) for a highly divine, chemical-free red powder. Priced at ₹189 per 200g of peerless purity. Applied on the Ajna Chakra, it balances energies and wards off negative vibrations.',
-        stock: 30,
-        badge: 'NEW BATCH',
-        is_organic: 1
-      },
-      {
-        id: 'p3',
-        name: 'Gandham (Chandanam)',
-        name_te: 'గంధం / చందనం',
-        price: 249,
-        original_price: 320,
-        category: 'powder',
-        image: '/images/products/gandham.png',
-        description: '✦ Consecrated Scripture Shloka\n"చందనస్య మహత్పుణ్యం పవిత్రం పాపనాశనమ్ । తాప-త్రయ-హరం నిత్యం శాంతి-సౌఖ్య-ప్రదాయకమ్ ॥"\n\nతాత్పర్యము (Telugu Meaning):\nచందన లేపనం నుదుట ధరించడం వల్ల మెదడు ప్రశాంతతను పొందుతుంది. ఇది తీవ్రమైన తాపాన్ని, కోపాన్ని అణచివేసే అత్యుత్తమ ద్రవ్యం.\n\nScriptural Significance of Keeping It:\nApplied to the third eye center or chest during prayers. Authentic sandalwood paste possesses powerful cooling and anti-inflammatory properties, physically subduing blood pressure, pacifying irritability, and providing profound mental clarity and spiritual tranquility.',
-        stock: 15,
-        badge: 'LIMITED',
-        is_organic: 0
-      },
-      {
-        id: 'p4',
-        name: 'Sacred Vibhuti',
-        name_te: 'విభూతి (భస్మం)',
-        price: 99,
-        original_price: 129,
-        category: 'powder',
-        image: '/images/products/vibhuti.png',
-        description: '✦ Consecrated Scripture Shloka\n"...భస్మధారణాత్ సర్వసౌఖ్యమస్తు॥"\n\nతాత్పర్యము (Telugu Meaning):\nఈ పవిత్ర భస్మ ధారణ వల్ల నాకు సర్వసౌఖ్యాలు, ప్రశాంతత లభించుగాక.\n\nScriptural Significance of Keeping It:\nApplied as three horizontal lines (Tripundra) on the forehead. Burning pure cow dung with herbs creates a sacred ash that physically cools the forehead and sinuses, subdues hyper-activity, settles the nervous system, and symbolizes absolute surrender to the formless Divine.',
-        stock: 100,
-        badge: 'PUREST ASH',
-        is_organic: 1
-      },
-      {
-        id: 'p5',
-        name: 'Yagnopavitam',
-        name_te: 'యజ్ఞోపవీతం (జంధ్యాలు)',
-        price: 199,
-        original_price: 259,
-        category: 'thread',
-        image: '/images/products/yagnopavitam.png',
-        description: 'Handspun cotton sacred thread (janeu) made the traditional way with 9 strands.',
-        stock: 40,
-        badge: null,
-        is_organic: 0
-      },
-      {
-        id: 'p6',
-        name: 'Complete Puja Combo Kit',
-        name_te: 'పూజా కిట్ (5-in-1)',
-        price: 699,
-        original_price: 825,
-        category: 'combo',
-        image: '/images/products/combo_kit.png',
-        description: 'All 5 sacred products beautifully packed in a traditional gift box. Perfect for festivals.',
-        stock: 20,
-        badge: 'BEST VALUE',
-        is_organic: 0
-      },
-      {
-        id: 'p7',
-        name: 'Hand-Rolled Organic Agarbatti',
-        name_te: 'చేతితో చేసిన అగర్బత్తి & ధూపం',
-        price: 99,
-        original_price: 149,
-        category: 'incense',
-        image: '/images/products/agarbatti.png',
-        description: 'Premium pure incense sticks hand-rolled by remote village artisans using natural gums and flower dust.',
-        stock: 60,
-        badge: 'COTTAGE CRAFT',
-        is_organic: 1
-      },
-      {
-        id: 'p_camphor',
-        name: 'Pure Camphor',
-        name_te: 'కర్పూరం (సుద్ధ కర్పూరం)',
-        price: 120,
-        original_price: 150,
-        category: 'incense',
-        image: '/images/products/camphor.png',
-        description: '100% pure chemical-free refined camphor tablets. Creates a divine ambiance for daily Arati.',
-        stock: 50,
-        badge: 'ORGANIC',
-        is_organic: 1
-      },
-      {
-        id: 'p_wicks',
-        name: 'Wicks & Ghee Deepa Samagri',
-        name_te: 'వత్తులు & నెయ్యి దీప సామగ్రి',
-        price: 80,
-        original_price: 100,
-        category: 'oil_wicks',
-        image: '/images/products/wicks.png',
-        description: 'High-quality cotton wicks bundled with pure aromatic ghee for auspicious lamps.',
-        stock: 120,
-        badge: 'BEST QUALITY',
-        is_organic: 1
-      },
-      {
-        id: 'p_oils',
-        name: 'Pooja Oils (Sesame/Ghee/Castor)',
-        name_te: 'పూజా నూనెలు (నెయ్యి, నువ్వుల నూనె)',
-        price: 180,
-        original_price: 220,
-        category: 'oil_wicks',
-        image: '/images/products/oils.png',
-        description: 'Sacred oils collection containing pure cold-pressed sesame oil and castor oil for traditional lamp lighting.',
-        stock: 80,
-        badge: '100% PURE',
-        is_organic: 1
-      },
-      {
-        id: 'p_coconut',
-        name: 'Pooja Coconut & Betel Leaves Pack',
-        name_te: 'కొబ్బరికాయలు, తమలపాకులు, వక్కలు',
-        price: 75,
-        original_price: 95,
-        category: 'fresh',
-        image: '/images/products/coconut.png',
-        description: 'Fresh pooja coconut bundled with organic betel leaves and betel nuts (areca nuts) in a traditional arrangement.',
-        stock: 40,
-        badge: 'FRESH',
-        is_organic: 1
-      },
-      {
-        id: 'p_kalash',
-        name: 'Kalasha Samagri Pack',
-        name_te: 'కలశ సామగ్రి (కలశం, మామిడి ఆకులు)',
-        price: 150,
-        original_price: 180,
-        category: 'combo',
-        image: '/images/products/kalash.png',
-        description: 'Includes copper/brass kalash thread, dried mango leaves, coconut and holy water mix for setup.',
-        stock: 35,
-        badge: 'COMPLETE',
-        is_organic: 0
-      },
-      {
-        id: 'p_homa',
-        name: 'Homa Dravya & Samidhalu Pack',
-        name_te: 'హోమ ద్రవ్యాలు (హోమ సామాగ్రి)',
-        price: 299,
-        original_price: 350,
-        category: 'powder',
-        image: '/images/products/homa.png',
-        description: 'Premium bundle of dried medicinal herbs, navadhanyas, and sacred wood sticks for homam/havan rituals.',
-        stock: 25,
-        badge: 'TRADITIONAL',
-        is_organic: 1
-      },
-      {
-        id: 'p_deity_decoration',
-        name: 'Deity Decoration Ornaments & Garlands',
-        name_te: 'దేవతల అలంకరణ సామగ్రి (పూలమాలలు)',
-        price: 199,
-        original_price: 250,
-        category: 'fresh',
-        image: '/images/products/decorations.png',
-        description: 'Divine deity garlands, crowns, and ornaments to adorn your home altar idols beautifully.',
-        stock: 30,
-        badge: 'DIVINE',
-        is_organic: 0
-      },
-      {
-        id: 'p_vessels',
-        name: 'Pooja Vessels (Brass & Copper)',
-        name_te: 'పూజా పాత్రలు (పీత్తలు, తాంబా పాత్రలు)',
-        price: 450,
-        original_price: 550,
-        category: 'vessel',
-        image: '/images/products/vessels.png',
-        description: 'Pure brass and copper plates, Panchapatra spoon, and bell. Highly durable and traditional.',
-        stock: 20,
-        badge: 'HANDCRAFTED',
-        is_organic: 0
-      },
-      {
-        id: 'p_trio_pack',
-        name: 'Special Offer: Pooja Trio Pack',
-        name_te: 'పూజా త్రియో ప్యాక్ (పసుపు + కుంకుమ + విభూది)',
-        price: 279,
-        original_price: 437,
-        category: 'combo',
-        image: '/images/products/trio_pack.png',
-        description: '✦ SPECIAL OFFER: Get the trio pack combining 100% Organic Pasupu, Pure Kumkum, and Sacred Vibhuti. All 3 high-quality items for only ₹279! (Special Offer for Devotees)',
-        stock: 50,
-        badge: 'SPECIAL OFFER',
-        is_organic: 1
-      }
-    ];
+    const count = await dbGet("SELECT COUNT(*) as count FROM products");
+    if (!count || count.count === 0) {
+      const initialProducts = [
+        {
+          id: 'p1',
+          name: 'Organic Pasupu',
+          name_te: 'పసుపు (పచ్చ పసుపు)',
+          price: 149,
+          original_price: 199,
+          category: 'powder',
+          image: '/images/products/pasupu.png',
+          description: '✦ Consecrated Scripture Shloka\n"హరిద్రాం ధారయేద్దేవీం సంపదం సౌభాగ్య దాయినీమ్।సర్వ దారిద్ర్య నాశినీం గౌరీం త్వాం నమామ్యహమ్॥"\n\nతాత్పర్యము (Telugu Meaning):\n• హరిద్రాం ధారయేద్దేవీం: ఐశ్వర్యప్రదాత, దేవి స్వరూపమైన ఈ పసుపును ధరిస్తున్నాను. • సంపదం సౌభాగ్య దాయినీమ్: సంపదలను, దీర్ఘసుమంగళీత్వాన్ని (సౌభాగ్యాన్ని) ప్రసాదించే తల్లి. • సర్వ దారిద్ర్య నాశినీం: సమస్త ఆర్థిక, మానసిక దారిద్ర్యాలను/కష్టాలను నశింపజేసేది. • గౌరీం త్వాం నమామ్యహమ్: అటువంటి మంగళప్రదరాలైన గౌరీ దేవికి నేను నమస్కరిస్తున్నాను.\n\nScriptural Significance of Keeping It:\nAwaiting for FSSAI license, post which we will be back. Traditionally hand-ground with stone cylinders to retain all natural oils and colors, safe and highly sacred for home thresholds and pujas.',
+          stock: 0,
+          badge: 'ORGANIC',
+          is_organic: 1
+        },
+        {
+          id: 'p2',
+          name: 'Organic Kumkum (200g)',
+          name_te: 'కుంకుమ',
+          price: 189,
+          original_price: 220,
+          category: 'powder',
+          image: '/images/products/kumkum.png',
+          description: '✦ Consecrated Scripture Shloka\n"లక్ష్మీ శ్రేష్ఠాం సతీం దేవీం సర్వ మంగళ దాయినీమ్।కుంకుమేనార్చయామ్యద్య త్వాం నమామి హరిప్రియే॥"\n\nతాత్పర్యము (Telugu Meaning):\n• లక్ష్మీ శ్రేష్ఠాం సతీం దేవీం: దేవేరులలో శ్రేష్ఠురాలైన, పరమ పతివ్రత అయిన ఓ లక్ష్మీదేవి! • సర్వ మంగళ దాయినీమ్: సమస్త శుభాలను, మంగళాలను ప్రసాదించే తల్లి! •కుంకుమేనార్చయామ్యద్య: ఈ పవిత్రమైన కుంకుమతో నిన్ను పూజిస్తూ (నా నుదుట) ధరిస్తున్నాను. • త్వాం నమామి హరిప్రియే: శ్రీమహావిష్ణువుకు అత్యంత ప్రియమైన ఓ జననీ! నీకు నమస్కరిస్తున్నాను.\n\nScriptural Significance of Keeping It:\nSourced from Telangana. Handcrafted using the original ancient process: 100% pure premium Kumkum stones are stone-ground along with yellow horns (turmeric horns) for a highly divine, chemical-free red powder. Priced at ₹189 per 200g of peerless purity. Applied on the Ajna Chakra, it balances energies and wards off negative vibrations.',
+          stock: 30,
+          badge: 'NEW BATCH',
+          is_organic: 1
+        },
+        {
+          id: 'p3',
+          name: 'Gandham (Chandanam)',
+          name_te: 'గంధం / చందనం',
+          price: 249,
+          original_price: 320,
+          category: 'powder',
+          image: '/images/products/gandham.png',
+          description: '✦ Consecrated Scripture Shloka\n"చందనస్య మహత్పుణ్యం పవిత్రం పాపనాశనమ్ । తాప-త్రయ-హరం నిత్యం శాంతి-సౌఖ్య-ప్రదాయకమ్ ॥"\n\nతాత్పర్యము (Telugu Meaning):\nచందన లేపనం నుదుట ధరించడం వల్ల మెదడు ప్రశాంతతను పొందుతుంది. ఇది తీవ్రమైన తాపాన్ని, కోపాన్ని అణచివేసే అత్యుత్తమ ద్రవ్యం.\n\nScriptural Significance of Keeping It:\nApplied to the third eye center or chest during prayers. Authentic sandalwood paste possesses powerful cooling and anti-inflammatory properties, physically subduing blood pressure, pacifying irritability, and providing profound mental clarity and spiritual tranquility.',
+          stock: 15,
+          badge: 'LIMITED',
+          is_organic: 0
+        },
+        {
+          id: 'p4',
+          name: 'Sacred Vibhuti',
+          name_te: 'విభూతి (భస్మం)',
+          price: 99,
+          original_price: 129,
+          category: 'powder',
+          image: '/images/products/vibhuti.png',
+          description: '✦ Consecrated Scripture Shloka\n"ఐశ్వర్యమస్తు భయనాశనమస్తు నిత్యంఆరోగ్యమస్తు సకలార్థ లాభమస్తు।జ్ఞానాభివృద్దిరస్తు శత్రుక్షయమస్తు నిత్యంభస్మధారణాత్ సర్వసౌఖ్యమస్తు॥"\n\nతాత్పర్యము (Telugu Meaning):\n• ఐశ్వర్యమస్తు భయనాశనమస్తు నిత్యం: ఈ భస్మాన్ని ధరించడం వల్ల నాకు నిరంతరం ఐశ్వర్యం లభించుగాక, సమస్త భయాలు నశించుగాక. • आरोग्यమస్తు సకలార్థ లాభమస్తు: నిండు ఆరోగ్యం చేకూరుగాక, నేను చేసే పనులన్నింటిలో లాభం (విజయం) కలుగుగాక. • జ్ఞానాభివృద్దిరస్తు శత్రుక్షయమస్తు నిత్యం: నాలో జ్ఞానం వృద్ధి చెందుగాక, నాలోని అంతర్గత శత్రువులు (కామ, క్రోధ, లోభాలు) మరియు బాహ్య శత్రువులు నశించుగాక. • భస్మధారణాత్ సర్వసౌఖ్యమస్తు: ఈ పవిత్ర భస్మ ధారణ వల్ల నాకు సర్వసౌఖ్యాలు, ప్రశాంతత లభించుగాక.\n\nScriptural Significance of Keeping It:\nApplied as three horizontal lines (Tripundra) on the forehead. Burning pure cow dung with herbs creates a sacred ash that physically cools the forehead and sinuses, subdues hyper-activity, settles the nervous system, and symbolizes absolute surrender to the formless Divine.',
+          stock: 100,
+          badge: null,
+          is_organic: 1
+        },
+        {
+          id: 'p5',
+          name: 'Yagnopavitam',
+          name_te: 'యజ్ఞోపవీతం (జంధ్యాలు)',
+          price: 199,
+          original_price: 259,
+          category: 'thread',
+          image: '/images/products/yagnopavitam.png',
+          description: 'Handspun cotton sacred thread (janeu) made the traditional way with 9 strands.',
+          stock: 40,
+          badge: null,
+          is_organic: 0
+        },
+        {
+          id: 'p6',
+          name: 'Complete Puja Combo Kit',
+          name_te: 'పూజా కిట్ (5-in-1)',
+          price: 699,
+          original_price: 825,
+          category: 'combo',
+          image: '/images/products/combo_kit.png',
+          description: 'All 5 sacred products beautifully packed in a traditional gift box. Perfect for festivals.',
+          stock: 20,
+          badge: 'BEST VALUE',
+          is_organic: 0
+        },
+        {
+          id: 'p7',
+          name: 'Hand-Rolled Organic Agarbatti',
+          name_te: 'చేతితో చేసిన అగర్బత్తి',
+          price: 99,
+          original_price: 149,
+          category: 'incense',
+          image: '/images/products/agarbatti.png',
+          description: 'Premium pure incense sticks hand-rolled by remote village artisans using natural gums and flower dust.',
+          stock: 60,
+          badge: 'COTTAGE CRAFT',
+          is_organic: 1
+        }
+      ];
 
-    for (const p of initialProducts) {
-      const exist = await dbGet("SELECT id FROM products WHERE id = ?", [p.id]);
-      if (!exist) {
+      for (const p of initialProducts) {
         await dbRun(
           `INSERT INTO products (id, name, name_te, price, original_price, category, image, description, stock, badge, is_organic) 
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [p.id, p.name, p.name_te, p.price, p.original_price, p.category, p.image, p.description, p.stock, p.badge, p.is_organic]
         );
-      } else {
-        await dbRun(
-          `UPDATE products SET name = ?, name_te = ?, price = ?, original_price = ?, category = ?, description = ?, stock = ?, badge = ?, is_organic = ? WHERE id = ?`,
-          [p.name, p.name_te, p.price, p.original_price, p.category, p.description, p.stock, p.badge, p.is_organic, p.id]
-        );
       }
+      console.log('✦ Seeded initial products including custom remote cottage industry crafts.');
     }
-    console.log('✦ Seeded and updated product catalog from the Telugu poster successfully.');
 
     // Ensure all existing product images are updated to local paths on startup
     const updates = [
@@ -1593,16 +1270,7 @@ async function seedProducts() {
       { id: 'p4', image: '/images/products/vibhuti.png' },
       { id: 'p5', image: '/images/products/yagnopavitam.png' },
       { id: 'p6', image: '/images/products/combo_kit.png' },
-      { id: 'p7', image: '/images/products/agarbatti.png' },
-      { id: 'p_camphor', image: '/images/products/camphor.png' },
-      { id: 'p_wicks', image: '/images/products/wicks.png' },
-      { id: 'p_oils', image: '/images/products/oils.png' },
-      { id: 'p_coconut', image: '/images/products/coconut.png' },
-      { id: 'p_kalash', image: '/images/products/kalash.png' },
-      { id: 'p_homa', image: '/images/products/homa.png' },
-      { id: 'p_deity_decoration', image: '/images/products/decorations.png' },
-      { id: 'p_vessels', image: '/images/products/vessels.png' },
-      { id: 'p_trio_pack', image: '/images/products/trio_pack.png' }
+      { id: 'p7', image: '/images/products/agarbatti.png' }
     ];
     for (const u of updates) {
       await dbRun("UPDATE products SET image = ? WHERE id = ?", [u.image, u.id]);
@@ -1614,8 +1282,6 @@ async function seedProducts() {
 
 async function seedVedicSystem() {
   try {
-    // FORCE UPDATE GURUKULAM CLASSES TO ENSURE PREMIUM TRADITIONAL EPICS
-    await dbRun("DELETE FROM classes");
     const initialClasses = [
       {
         id: 'cls-1',
@@ -1669,16 +1335,22 @@ async function seedVedicSystem() {
       }
     ];
     for (const c of initialClasses) {
-      await dbRun(
-        "INSERT INTO classes (id, title, instructor_name, time, fee, image, description, video_url, status, proposer_name, proposer_location) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [c.id, c.title, c.instructor_name, c.time, c.fee, c.image, c.description, c.video_url || null, 'approved', c.instructor_name, 'Hyderabad']
-      );
+      const existingClass = await dbGet("SELECT id FROM classes WHERE id = ?", [c.id]);
+      if (!existingClass) {
+        try {
+          await dbRun(
+            "INSERT INTO classes (id, title, instructor_name, time, fee, image, description, video_url, status, proposer_name, proposer_location) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [c.id, c.title, c.instructor_name, c.time, c.fee, c.image, c.description, c.video_url || null, 'approved', c.instructor_name, 'Hyderabad']
+          );
+        } catch (insertErr) {
+          if (!insertErr.message.includes('Duplicate entry') && !insertErr.message.includes('UNIQUE constraint failed')) {
+            throw insertErr;
+          }
+        }
+      }
     }
     console.log('✦ Gurukulam Classes seeded successfully.');
 
-    // Seed vetted priests
-    await dbRun("DELETE FROM purohits");
-    
     const seededPurohits = [
       {
         id: 'acharya_1',
@@ -1773,11 +1445,20 @@ async function seedVedicSystem() {
     ];
 
     for (const p of seededPurohits) {
-      await dbRun(
-        `INSERT INTO purohits (id, name, specialization, rating, fee, image, location, bookings_count, bio, credentials, portfolio_images, email, phone, gov_id_type, gov_id_number, gov_id_image, is_verified, teaching_interest)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [p.id, p.name, p.specialization, p.rating, p.fee, p.image, p.location, p.bookings_count, p.bio, p.credentials, p.portfolio_images, p.email, p.phone, p.gov_id_type, p.gov_id_number, p.gov_id_image, 1, 1]
-      );
+      const existingPurohit = await dbGet("SELECT id FROM purohits WHERE id = ?", [p.id]);
+      if (!existingPurohit) {
+        try {
+          await dbRun(
+            `INSERT INTO purohits (id, name, specialization, rating, fee, image, location, bookings_count, bio, credentials, portfolio_images, email, phone, gov_id_type, gov_id_number, gov_id_image, is_verified, teaching_interest)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [p.id, p.name, p.specialization, p.rating, p.fee, p.image, p.location, p.bookings_count, p.bio, p.credentials, p.portfolio_images, p.email, p.phone, p.gov_id_type, p.gov_id_number, p.gov_id_image, 1, 1]
+          );
+        } catch (insertErr) {
+          if (!insertErr.message.includes('Duplicate entry') && !insertErr.message.includes('UNIQUE constraint failed')) {
+            throw insertErr;
+          }
+        }
+      }
     }
     console.log('✦ Seeded 5 Vetted Priests in purohits table.');
     await seedPurohitBookingsAndReviews();

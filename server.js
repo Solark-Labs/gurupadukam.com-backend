@@ -38,11 +38,6 @@ const app = express();
 app.use(compression());
 app.use(express.json({limit: process?.env?.API_PAYLOAD_MAX_SIZE || "7mb"}));
 
-// Serve static frontend assets (images, logo) so production and dev both find images
-const FRONTEND_PUBLIC = path.resolve(__dirname, '..', 'frontend', 'public');
-app.use('/images', express.static(path.join(FRONTEND_PUBLIC, 'images'), { maxAge: '7d', etag: true }));
-app.use('/gurupadukam_logo.png', express.static(path.join(FRONTEND_PUBLIC, 'gurupadukam_logo.png'), { maxAge: '7d' }));
-
 // --- Caching layer for High Concurrency ---
 let cachePurohits = null;
 let cachePurohitsTime = 0;
@@ -2107,28 +2102,8 @@ app.post('/api/products/:id/reviews', authenticateToken, async (req, res) => {
 // --- Notifications APIs for Admins ---
 app.get('/api/admin/notifications', authenticateToken, requireAdminOrSuper, async (req, res) => {
   try {
-    const notifications = await dbQuery("SELECT * FROM notifications WHERE user_id IS NULL ORDER BY created_at DESC");
+    const notifications = await dbQuery("SELECT * FROM notifications ORDER BY created_at DESC");
     res.json(notifications);
-  } catch (err) {
-    res.status(500).json({ error: 'Internal Error', message: err.message });
-  }
-});
-
-// --- Personal Notifications APIs ---
-app.get('/api/notifications', authenticateToken, async (req, res) => {
-  try {
-    const notifications = await dbQuery("SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC", [req.user.id]);
-    res.json(notifications);
-  } catch (err) {
-    res.status(500).json({ error: 'Internal Error', message: err.message });
-  }
-});
-
-app.put('/api/notifications/:id/read', authenticateToken, async (req, res) => {
-  const notificationId = req.params.id;
-  try {
-    await dbRun("UPDATE notifications SET \`read\` = 1 WHERE id = ? AND user_id = ?", [notificationId, req.user.id]);
-    res.json({ message: 'Notification marked as read successfully.' });
   } catch (err) {
     res.status(500).json({ error: 'Internal Error', message: err.message });
   }
@@ -2757,12 +2732,6 @@ app.put('/api/orders/:id/status', authenticateToken, requireSuperAdmin, async (r
         existing.customer_phone,
         reason
       );
-    } else if (status === 'Shipped') {
-      const smsText = `Hari Om ${existing.customer_name} ji! Your Gurupadukam order ${existing.id} has been shipped! Track your package and get ready to receive pure vedic samagri. 🌿`;
-      if (existing.customer_phone) {
-        sendSMSNotification(existing.customer_phone, smsText).catch(e => console.error(e));
-        sendWhatsAppNotification(existing.customer_phone, smsText).catch(e => console.error(e));
-      }
     }
 
     res.json({ message: 'Order shipment status updated successfully.' });
@@ -3961,40 +3930,23 @@ app.put('/api/purohits/:id', authenticateToken, async (req, res) => {
 });
 
 app.post('/api/purohits', authenticateToken, requireAdminOrSuper, async (req, res) => {
-  const { name, specialization, fee, image, location, phone } = req.body;
-  if (!name || !specialization || !location || !phone) {
-    return res.status(400).json({ error: 'Bad Request', message: 'Purohit Name, Phone, Specialization, and Location are required.' });
+  const { name, specialization, fee, image, location } = req.body;
+  if (!name || !specialization || !location) {
+    return res.status(400).json({ error: 'Bad Request', message: 'Purohit Name, Specialization, and Location are required.' });
   }
 
   try {
-    const cleanPhone = normalizePhone(phone);
-    
-    // Check if phone already exists
-    const existingUser = await dbGet("SELECT id FROM users WHERE phone = ?", [cleanPhone]);
-    if (existingUser) {
-      return res.status(400).json({ error: 'Bad Request', message: 'User with this phone number already exists.' });
-    }
-
     const id = 'purohit-' + Math.random().toString(36).substr(2, 9);
-    const userId = 'usr-' + Math.random().toString(36).substr(2, 9);
-    const details = { id, name, specialization, fee: fee || 0, image: image || '', location, phone: cleanPhone };
+    const details = { id, name, specialization, fee: fee || 0, image: image || '', location };
 
     if (req.user.role === 'super_admin') {
-      const generatedPass = await bcrypt.hash(Math.random().toString(36), 10);
-      const regEmail = `${cleanPhone}@phone.user`;
-      
-      // Create the user account for login
+      // Commit directly
       await dbRun(
-        "INSERT INTO users (id, name, email, password_hash, phone, role, is_blocked) VALUES (?, ?, ?, ?, ?, 'purohit', 0)",
-        [userId, name, regEmail, generatedPass, cleanPhone]
+        `INSERT INTO purohits (id, name, specialization, rating, fee, image, location, bookings_count)
+         VALUES (?, ?, ?, 5.0, ?, ?, ?, 0)`,
+        [id, name, specialization, fee || 0, image || '', location]
       );
-      
-      // Create the purohit profile (linking via the same ID for simplicity, or we can just use the userId as purohitId)
-      await dbRun(
-        `INSERT INTO purohits (id, name, specialization, rating, fee, image, location, bookings_count, phone)
-         VALUES (?, ?, ?, 5.0, ?, ?, ?, 0, ?)`,
-        [id, name, specialization, fee || 0, image || '', location, cleanPhone]
-      );
+      invalidatePurohitsCache();
       invalidatePurohitsCache();
       return res.status(201).json({ message: 'Purohit created successfully.', purohit: details });
     } else {
@@ -4052,7 +4004,7 @@ app.get('/api/admin/welfare', authenticateToken, requireAdminOrSuper, async (req
 
 app.post('/api/purohits/:id/book', authenticateToken, async (req, res) => {
   const purohitId = req.params.id;
-  const { poojaType, bookingDate, endDate, timeSlot, ritualMode, email } = req.body;
+  const { poojaType, bookingDate, timeSlot, ritualMode, email } = req.body;
   let { address } = req.body;
   
   if (ritualMode === 'Online' && !address) {
@@ -4068,9 +4020,6 @@ app.post('/api/purohits/:id/book', authenticateToken, async (req, res) => {
     if (!purohit) {
       return res.status(404).json({ error: 'Not Found', message: 'Purohit not found.' });
     }
-
-    // We previously rejected conflicts here. Now we allow overlapping bookings to be created 
-    // in 'Pending_Acharya_Confirmation' state so the Purohit can manually choose which one to accept.
 
     const defaultChecklist = poojaType === 'Vivaham' 
       ? [
@@ -4101,30 +4050,20 @@ app.post('/api/purohits/:id/book', authenticateToken, async (req, res) => {
     const bookingId = 'bk-' + Math.random().toString(36).substr(2, 9);
     
     await dbRun(
-      `INSERT INTO purohit_bookings (id, purohit_id, user_id, pooja_type, booking_date, time_slot, address, status, items, secure_deposit, ritual_mode, google_meet_link, end_date)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending_Acharya_Confirmation', ?, 0, ?, ?, ?)`,
-      [bookingId, purohitId, req.user.id, poojaType, bookingDate, timeSlot, address, JSON.stringify(defaultChecklist), mode, null, endDate || null]
+      `INSERT INTO purohit_bookings (id, purohit_id, user_id, pooja_type, booking_date, time_slot, address, status, items, secure_deposit, ritual_mode, google_meet_link)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending_Acharya_Confirmation', ?, 0, ?, ?)`,
+      [bookingId, purohitId, req.user.id, poojaType, bookingDate, timeSlot, address, JSON.stringify(defaultChecklist), mode, null]
     );
 
     // Increment bookings count
     await dbRun("UPDATE purohits SET bookings_count = bookings_count + 1 WHERE id = ?", [purohitId]);
 
     // Send a notification to Admin
-    const notifIdAdmin = 'notif-' + Math.random().toString(36).substr(2, 9);
+    const notifId = 'notif-' + Math.random().toString(36).substr(2, 9);
     await dbRun(
       `INSERT INTO notifications (id, title, \`desc\`, \`read\`) VALUES (?, ?, ?, 0)`,
-      [notifIdAdmin, `New Purohit Booking`, `Purohit booking ${bookingId} placed by ${req.user.name} for ${poojaType} on ${bookingDate}.`]
+      [notifId, `New Purohit Booking`, `Purohit booking ${bookingId} placed by ${req.user.name} for ${poojaType} on ${bookingDate}.`]
     );
-
-    // Send personalized notification to the Priest
-    const priestUserRec = await dbGet("SELECT id, email, phone FROM users WHERE id = ?", [purohitId]);
-    if (priestUserRec) {
-      const notifIdPriest = 'notif-' + Math.random().toString(36).substr(2, 9);
-      await dbRun(
-        `INSERT INTO notifications (id, user_id, title, \`desc\`, \`read\`) VALUES (?, ?, ?, ?, 0)`,
-        [notifIdPriest, priestUserRec.id, `✦ Missed Alert: New ${poojaType} Booking`, `Devotee ${req.user.name} booked a session for ${bookingDate} at ${timeSlot}. Location: ${address}. Please confirm.`]
-      );
-    }
 
     // Send Booking Notification Email & SMS to Priest only (Devotee gets notified on Confirmation)
     try {
@@ -4495,21 +4434,6 @@ app.post('/api/quotes/:id/accept', authenticateToken, async (req, res) => {
     const timeSlot = '09:00 AM - 11:30 AM';
     const address = quote.details;
     const purohitId = quote.purohit_id || 'purohit-1'; // fallback
-
-    // Check for booking slot conflicts before accepting quote and auto-creating booking
-    const conflict = await dbGet(
-      `SELECT id FROM purohit_bookings 
-       WHERE purohit_id = ? AND booking_date = ? AND time_slot = ? 
-       AND status IN ('Pending_Acharya_Confirmation', 'Confirmed')`,
-      [purohitId, bookingDate, timeSlot]
-    );
-
-    if (conflict) {
-      return res.status(409).json({ 
-        error: 'Conflict', 
-        message: 'This Purohit has already been booked for the date and time slot of this quotation. Sibling bid acceptance is not possible.' 
-      });
-    }
 
     const defaultChecklist = [
       { id: 'item-1', name: 'Complete 5-in-1 Puja Combo Kit', quantity: 1, price: 599, isStoreProduct: true, storeProductId: 'p6' },
@@ -5923,13 +5847,19 @@ function calculateVedicCompatibility(searcher, match) {
 }
 
 await dbInitPromise;
-const server = app.listen(PORT, API_BACKEND_HOST, () => {
-  console.log(`Guru Padukam Production Backend listening at http://localhost:${PORT}`);
-});
+let server = null;
+if (!process.env.VERCEL) {
+  server = app.listen(PORT, API_BACKEND_HOST, () => {
+    console.log(`Guru Padukam Production Backend listening at http://localhost:${PORT}`);
+  });
+} else {
+  console.log('✦ Backend running as serverless function on Vercel.');
+}
 
 const wss = new WebSocketServer({ noServer: true });
 
-server.on('upgrade', async (request, socket, head) => {
+if (server) {
+  server.on('upgrade', async (request, socket, head) => {
   const url = new URL(request.url, `http://${request.headers.host}`);
 
   if (url.pathname === '/ws-proxy') {
@@ -6032,3 +5962,6 @@ server.on('upgrade', async (request, socket, head) => {
     socket.destroy();
   }
 });
+}
+
+export default app;
