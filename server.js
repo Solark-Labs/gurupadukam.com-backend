@@ -33,6 +33,7 @@ const requirePurohitRole = requireRole(['purohit', 'super_admin']);
 const requireAdminOrSuperOrPurohit = requireRole(['admin', 'super_admin', 'purohit']);
 import { createRazorpayOrder, verifyRazorpaySignature, getRazorpayKey } from './razorpay.js';
 import { createShiprocketShipment, getShiprocketTracking } from './shiprocket.js';
+import { getChecklistForRitual } from './rituals_checklists.js';
 
 const app = express();
 app.use(compression());
@@ -4130,32 +4131,7 @@ app.post('/api/purohits/:id/book', authenticateToken, async (req, res) => {
     if (!purohit) {
       return res.status(404).json({ error: 'Not Found', message: 'Purohit not found.' });
     }
-
-    const defaultChecklist = poojaType === 'Vivaham' 
-      ? [
-          { id: 'item-1', name: 'Pure Pasupu (Turmeric Powder) - 100g', quantity: 5, price: 149, isStoreProduct: true, storeProductId: 'p1' },
-          { id: 'item-2', name: 'Pure Kumkum - 100g', quantity: 2, price: 129, isStoreProduct: true, storeProductId: 'p2' },
-          { id: 'item-3', name: 'Gandham (Chandanam Sandalwood Paste) - 50g', quantity: 2, price: 249, isStoreProduct: true, storeProductId: 'p3' },
-          { id: 'item-4', name: 'Yagnopavitam (Sacred Janeu Cotton Threads)', quantity: 3, price: 199, isStoreProduct: true, storeProductId: 'p5' },
-          { id: 'item-5', name: 'Complete 5-in-1 Puja Combo Kit', quantity: 1, price: 599, isStoreProduct: true, storeProductId: 'p6' },
-          { id: 'item-6', name: 'Sacred Vibhuti (Holy Ash) - 100g', quantity: 1, price: 99, isStoreProduct: true, storeProductId: 'p4' },
-          { id: 'item-7', name: 'Sacred Coconuts (for Kalasha puja)', quantity: 4, price: 40, isStoreProduct: false },
-          { id: 'item-8', name: 'Betel Leaves & Areca Nuts Bundle', quantity: 1, price: 50, isStoreProduct: false }
-        ]
-      : poojaType === 'Satyanarayana Vratam'
-      ? [
-          { id: 'item-1', name: 'Complete 5-in-1 Puja Combo Kit', quantity: 1, price: 599, isStoreProduct: true, storeProductId: 'p6' },
-          { id: 'item-2', name: 'Pure Pasupu (Turmeric Powder) - 100g', quantity: 2, price: 149, isStoreProduct: true, storeProductId: 'p1' },
-          { id: 'item-3', name: 'Pure Kumkum - 100g', quantity: 1, price: 129, isStoreProduct: true, storeProductId: 'p2' },
-          { id: 'item-4', name: 'Gandham (Chandanam Sandalwood Paste) - 50g', quantity: 1, price: 249, isStoreProduct: true, storeProductId: 'p3' },
-          { id: 'item-5', name: 'Sacred Coconuts', quantity: 2, price: 40, isStoreProduct: false }
-        ]
-      : [
-          { id: 'item-1', name: 'Complete 5-in-1 Puja Combo Kit', quantity: 1, price: 599, isStoreProduct: true, storeProductId: 'p6' },
-          { id: 'item-2', name: 'Pure Pasupu (Turmeric Powder) - 100g', quantity: 1, price: 149, isStoreProduct: true, storeProductId: 'p1' },
-          { id: 'item-3', name: 'Pure Kumkum - 100g', quantity: 1, price: 129, isStoreProduct: true, storeProductId: 'p2' }
-        ];
-
+    const defaultChecklist = getChecklistForRitual(poojaType);
     const mode = ritualMode || 'Offline';
     const bookingId = 'bk-' + Math.random().toString(36).substr(2, 9);
     
@@ -4269,6 +4245,11 @@ app.post('/api/purohits/:id/book', authenticateToken, async (req, res) => {
 
 app.post('/api/purohits/bookings/:bookingId/confirm', authenticateToken, requirePurohitRole, async (req, res) => {
   const { bookingId } = req.params;
+  const { fixedPrice } = req.body;
+
+  if (!fixedPrice || Number(fixedPrice) <= 0) {
+    return res.status(400).json({ error: 'Bad Request', message: 'You must specify a valid fixed price (Dakshina) amount for confirmation.' });
+  }
   
   try {
     const booking = await dbGet("SELECT * FROM purohit_bookings WHERE id = ?", [bookingId]);
@@ -4291,6 +4272,75 @@ app.post('/api/purohits/bookings/:bookingId/confirm', authenticateToken, require
       return res.status(404).json({ error: 'Not Found', message: 'Related users not found.' });
     }
 
+    const fixed = Number(fixedPrice);
+    const advance = fixed * 0.25; // 25% advance
+
+    await dbRun(
+      "UPDATE purohit_bookings SET status = 'Pending_Devotee_Agreement', fixed_price = ?, advance_amount = ? WHERE id = ?",
+      [fixed, advance, bookingId]
+    );
+
+    // Notify Devotee about the fixed price and advance payment requirement
+    const prefs = devotee.communication_preferences ? JSON.parse(devotee.communication_preferences) : { sms: true, whatsapp: true, email: true };
+    const noticeMsg = `Hari Om ${devotee.name} ji! Acharya ${purohit.name} has accepted your booking for ${booking.pooja_type} and fixed the Dakshina to ₹${fixed}. Kindly pay the 25% advance of ₹${advance} to confirm the booking. 🌿`;
+
+    if (prefs.whatsapp && devotee.phone) {
+      await sendWhatsAppNotification(devotee.phone, noticeMsg);
+    }
+    if (prefs.sms && devotee.phone) {
+      await sendSMSNotification(devotee.phone, noticeMsg);
+    }
+    if (prefs.email && devotee.email) {
+      const devoteeSubject = `✦ Price Fixed & Agreement Required: Vedic Booking – Gurupadukam 🌿`;
+      const devoteeHtml = `
+        <div style="font-family: Arial, sans-serif; padding: 25px; border: 2px solid #C9943A; border-radius: 12px; max-width: 600px; background-color: #FCFBF8; margin: auto;">
+          <h2 style="color: #5C0A20; text-align: center; border-bottom: 2px solid #C9943A; padding-bottom: 12px; margin-top: 0;">gurupadukam.com</h2>
+          <p style="font-size: 15px; color: #1A1A1A; font-weight: bold;">Hari Om, ${devotee.name} ji!</p>
+          <p style="font-size: 13px; color: #333; line-height: 1.5;">Acharya ${purohit.name} has accepted your booking request for the <strong>${booking.pooja_type}</strong> ritual and proposed the Dakshina/fee details:</p>
+          
+          <div style="margin: 20px 0; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 15px; font-size: 12px; line-height: 1.6;">
+            <strong>Booking ID:</strong> ${bookingId}<br>
+            <strong>Fixed Price (Total Dakshina):</strong> ₹${fixed}<br>
+            <strong style="color: #5C0A20;">Required Advance (25%):</strong> ₹${advance}<br>
+            <strong>Purohit Name:</strong> ${purohit.name}
+          </div>
+
+          <p style="font-size: 13px; color: #333; line-height: 1.5;">Please log in to your dashboard to agree and complete the advance payment using secure checkout.</p>
+        </div>
+      `;
+      await sendEmailNotification(devotee.email, devoteeSubject, devoteeHtml);
+    }
+
+    res.json({ message: 'Booking accepted; fixed price set to ₹' + fixed + '. Awaiting devotee advance payment.', status: 'Pending_Devotee_Agreement' });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
+// Devotee Agree & Pay Advance
+app.post('/api/bookings/:bookingId/agree-and-pay-advance', authenticateToken, async (req, res) => {
+  const { bookingId } = req.params;
+  try {
+    const booking = await dbGet("SELECT * FROM purohit_bookings WHERE id = ?", [bookingId]);
+    if (!booking) {
+      return res.status(404).json({ error: 'Not Found', message: 'Booking not found.' });
+    }
+
+    if (booking.user_id !== req.user.id && req.user.role !== 'super_admin') {
+      return res.status(403).json({ error: 'Forbidden', message: 'You are not authorized to pay for this booking.' });
+    }
+
+    if (booking.status !== 'Pending_Devotee_Agreement') {
+      return res.status(400).json({ error: 'Bad Request', message: 'This booking is not awaiting agreement/advance payment.' });
+    }
+
+    const purohit = await dbGet("SELECT * FROM purohits WHERE id = ?", [booking.purohit_id]);
+    const devotee = await dbGet("SELECT name, email, phone, communication_preferences FROM users WHERE id = ?", [booking.user_id]);
+
+    if (!purohit || !devotee) {
+      return res.status(404).json({ error: 'Not Found', message: 'Related profiles not found.' });
+    }
+
     const generateMeetCode = () => {
       const abc = 'abcdefghijklmnopqrstuvwxyz';
       const part = (len) => Array.from({ length: len }, () => abc[Math.floor(Math.random() * abc.length)]).join('');
@@ -4298,8 +4348,9 @@ app.post('/api/purohits/bookings/:bookingId/confirm', authenticateToken, require
     };
     const meetLink = booking.ritual_mode === 'Online' ? generateMeetCode() : null;
 
+    // Update to Confirmed and advance paid
     await dbRun(
-      "UPDATE purohit_bookings SET status = 'Confirmed', google_meet_link = ? WHERE id = ?",
+      "UPDATE purohit_bookings SET status = 'Confirmed', advance_paid = 1, google_meet_link = ? WHERE id = ?",
       [meetLink, bookingId]
     );
 
@@ -4327,6 +4378,8 @@ app.post('/api/purohits/bookings/:bookingId/confirm', authenticateToken, require
             <strong>Date:</strong> ${booking.booking_date}<br>
             <strong>Time Slot:</strong> ${booking.time_slot}<br>
             <strong>Purohit:</strong> ${purohit.name}<br>
+            <strong>Total Price (Dakshina):</strong> ₹${booking.fixed_price || 0}<br>
+            <strong>Advance Paid:</strong> ₹${booking.advance_amount || 0} (Fully Settled)<br>
             <strong>Ritual Venue Address:</strong> ${booking.address}${booking.ritual_mode === 'Online' ? `<br><strong>Google Meet Link:</strong> <a href="${meetLink}" style="color: #5C0A20; font-weight: bold;">Join Google Meet Session</a>` : ''}
           </div>
 
@@ -4337,10 +4390,9 @@ app.post('/api/purohits/bookings/:bookingId/confirm', authenticateToken, require
           <p style="font-size: 13px; color: #333; line-height: 1.5;">Our Purohit will contact you shortly to coordinate any specific details or family gotra/nakshatra sankalpam inputs.</p>
         </div>
       `;
-      sendEmailNotification(devotee.email, devoteeSubject, devoteeHtml, emailAttachments);
+      await sendEmailNotification(devotee.email, devoteeSubject, devoteeHtml, emailAttachments);
     }
 
-    // Notify Priest as well
     if (purohit.email) {
       const priestConfirmSubject = `✦ Confirmed Booking: Devotee ${devotee.name} – Gurupadukam 🌿`;
       const priestConfirmHtml = `
@@ -4357,31 +4409,23 @@ app.post('/api/purohits/bookings/:bookingId/confirm', authenticateToken, require
             <strong>Time Slot:</strong> ${booking.time_slot}<br>
             <strong>Devotee Name:</strong> ${devotee.name}<br>
             <strong>Devotee Contact:</strong> ${devotee.phone || devotee.email}<br>
+            <strong>Total Price:</strong> ₹${booking.fixed_price || 0}<br>
+            <strong>Advance Paid:</strong> ₹${booking.advance_amount || 0}<br>
             <strong>Venue Address:</strong> ${booking.address}${booking.ritual_mode === 'Online' ? `<br><strong>Google Meet Link:</strong> <a href="${meetLink}" style="color: #5C0A20; font-weight: bold;">Join Google Meet Session</a>` : ''}
           </div>
           <p style="font-size: 13px; color: #333; line-height: 1.5;">Please access your dashboard to view the booking and customized checklist.</p>
         </div>
       `;
-      sendEmailNotification(purohit.email, priestConfirmSubject, priestConfirmHtml, [{ filename: 'invite.ics', content: icsString, contentType: 'text/calendar; charset=utf-8; method=REQUEST' }]);
-    }
-
-    if (purohit.phone) {
-      const priestSms = booking.ritual_mode === 'Online'
-        ? `Hari Om! Confirmed Online Puja booking ${bookingId} for devotee ${devotee.name}. Join Google Meet: ${meetLink} ✦`
-        : `Hari Om! Confirmed Puja booking ${bookingId} for devotee ${devotee.name} on ${booking.booking_date} at ${booking.address}. ✦`;
-      sendSMSNotification(purohit.phone, priestSms);
+      await sendEmailNotification(purohit.email, priestConfirmSubject, priestConfirmHtml, [{ filename: 'invite.ics', content: icsString, contentType: 'text/calendar; charset=utf-8; method=REQUEST' }]);
     }
 
     if (devotee.phone) {
-      const msg = booking.ritual_mode === 'Online'
-        ? `Hari Om! Online Puja confirmed with ${purohit.name} on ${booking.booking_date}. Join Google Meet: ${meetLink} ✦`
-        : `Hari Om! Puja booking ${bookingId} confirmed with ${purohit.name} for ${booking.pooja_type} on ${booking.booking_date}. ✦`;
-      
-      if (prefs.sms) sendSMSNotification(devotee.phone, msg);
-      if (prefs.whatsapp) console.log(`[Simulated WhatsApp to ${devotee.phone}]: ${msg}`);
+      const msg = `Hari Om! Online/Offline Puja confirmed with ${purohit.name} on ${booking.booking_date}. ✦`;
+      if (prefs.whatsapp) await sendWhatsAppNotification(devotee.phone, msg);
+      if (prefs.sms) await sendSMSNotification(devotee.phone, msg);
     }
 
-    res.json({ message: 'Booking confirmed successfully', googleMeetLink: meetLink });
+    res.json({ success: true, message: 'Advance payment successful and booking confirmed!', googleMeetLink: meetLink });
   } catch (err) {
     res.status(500).json({ error: 'Internal Error', message: err.message });
   }
@@ -4409,11 +4453,216 @@ app.put('/api/bookings/:id/items', authenticateToken, async (req, res) => {
     return res.status(400).json({ error: 'Bad Request', message: 'Puja checklist items list required.' });
   }
   try {
+    const bookingId = req.params.id;
     await dbRun(
       "UPDATE purohit_bookings SET items = ?, items_purchased = ? WHERE id = ?",
-      [JSON.stringify(items), itemsPurchased ? 1 : 0, req.params.id]
+      [JSON.stringify(items), itemsPurchased ? 1 : 0, bookingId]
     );
+
+    // Fetch details to send real-time notifications to the devotee
+    try {
+      const booking = await dbGet("SELECT * FROM purohit_bookings WHERE id = ?", [bookingId]);
+      if (booking) {
+        const devotee = await dbGet("SELECT name, email, phone, communication_preferences FROM users WHERE id = ?", [booking.user_id]);
+        const purohit = await dbGet("SELECT name FROM users WHERE id = ?", [booking.purohit_id]);
+        
+        if (devotee && purohit) {
+          const prefs = devotee.communication_preferences ? JSON.parse(devotee.communication_preferences) : { sms: true, whatsapp: true, email: true };
+          const itemsText = items.map((item, idx) => `${idx + 1}. ${item.nameTe ? `${item.name} / ${item.nameTe}` : item.name} (x${item.quantity})`).join('\n');
+          const messageText = `Hari Om ${devotee.name} ji! Your Acharya ${purohit.name} has finalized the puja items checklist for your booking ${bookingId} (${booking.pooja_type}):\n\n${itemsText}\n\nKindly procure these items prior to the rituals. 🌿`;
+
+          // 1. Send WhatsApp / SMS
+          if (prefs.whatsapp && devotee.phone) {
+            await sendWhatsAppNotification(devotee.phone, messageText);
+          }
+          if (prefs.sms && devotee.phone) {
+            await sendSMSNotification(devotee.phone, messageText);
+          }
+
+          // 2. Send Email
+          if (prefs.email && devotee.email) {
+            const subject = `✦ Finalized Puja Items Checklist: ${booking.pooja_type} – Gurupadukam 🌿`;
+            const htmlContent = `
+              <div style="font-family: Arial, sans-serif; padding: 25px; border: 2px solid #C9943A; border-radius: 12px; max-width: 600px; background-color: #FCFBF8; margin: auto;">
+                <h2 style="color: #5C0A20; text-align: center; border-bottom: 2px solid #C9943A; padding-bottom: 12px; margin-top: 0;">gurupadukam.com</h2>
+                <p style="font-size: 15px; color: #1A1A1A; font-weight: bold;">Hari Om, ${devotee.name} ji!</p>
+                <p style="font-size: 13px; color: #333; line-height: 1.5;">Your Acharya, <strong>${purohit.name}</strong>, has updated and finalized the puja items checklist for your upcoming <strong>${booking.pooja_type}</strong> ritual on <strong>${booking.booking_date}</strong>.</p>
+                
+                <div style="margin: 20px 0; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 15px; font-size: 13px; line-height: 1.6;">
+                  <strong style="color: #5C0A20; font-size: 14px; display: block; border-bottom: 1px solid #eee; padding-bottom: 5px; margin-bottom: 8px;">Finalized Puja Checklist:</strong>
+                  <ul style="padding-left: 20px; margin: 0;">
+                    ${items.map(item => `<li><strong>${item.nameTe ? `${item.name} / ${item.nameTe}` : item.name}</strong>: ${item.quantity} units ${item.isStoreProduct ? '🌿 (Gurupadukam Sourced)' : ''}</li>`).join('')}
+                  </ul>
+                </div>
+                
+                <p style="font-size: 13px; color: #333;">Kindly procure these items before the ritual. You can also source 100% pure, natural ingredients directly from the Gurupadukam Store and avail of special bundle discounts!</p>
+                <p style="font-size: 12px; color: #C9943A; font-weight: bold; text-align: center;">✦ Loka Samastha Sukhino Bhavantu ✦</p>
+              </div>
+            `;
+            await sendEmailNotification(devotee.email, subject, htmlContent);
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[Puja Items Notify Devotee Error]:', e.message);
+    }
+
     res.json({ message: 'Booking checklist items successfully synchronized with priest workspace! 🌿' });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
+// --- 8.4.5 Handover Delegations Pool & Claim Workflows ---
+
+// Helper to calculate the booking scheduled start Date object
+function getBookingStartDateTime(bookingDateStr, timeSlotStr) {
+  let actualDateStr = bookingDateStr;
+  if (bookingDateStr.startsWith('Start:')) {
+    const parts = bookingDateStr.split('-');
+    actualDateStr = parts[0].replace('Start:', '').trim();
+  }
+
+  let startHour = 9;
+  let startMin = 0;
+  try {
+    const times = timeSlotStr.split('-');
+    const startTimeStr = times[0].trim();
+    const isPM = startTimeStr.toUpperCase().includes('PM');
+    const parts = startTimeStr.replace(/(AM|PM)/i, '').trim().split(':');
+    let hour = parseInt(parts[0]);
+    let min = parseInt(parts[1] || '0');
+    if (isPM && hour < 12) hour += 12;
+    if (!isPM && hour === 12) hour = 0;
+    startHour = hour;
+    startMin = min;
+  } catch (e) {}
+
+  const dt = new Date(actualDateStr);
+  dt.setHours(startHour, startMin, 0, 0);
+  return dt;
+}
+
+// 1. Request Handover (Host delegation)
+app.post('/api/purohits/bookings/:bookingId/request-handover', authenticateToken, requirePurohitRole, async (req, res) => {
+  const { bookingId } = req.params;
+  try {
+    const booking = await dbGet("SELECT * FROM purohit_bookings WHERE id = ?", [bookingId]);
+    if (!booking) {
+      return res.status(404).json({ error: 'Not Found', message: 'Booking not found.' });
+    }
+
+    if (booking.purohit_id !== req.user.id && req.user.role !== 'super_admin') {
+      return res.status(403).json({ error: 'Forbidden', message: 'You are not authorized to handover this booking.' });
+    }
+
+    // Check time constraint: at least 10 hours before start time
+    const bookingTime = getBookingStartDateTime(booking.booking_date, booking.time_slot);
+    const timeDiffHours = (bookingTime.getTime() - Date.now()) / (1000 * 60 * 60);
+
+    if (timeDiffHours < 10) {
+      return res.status(400).json({
+        error: 'Time Restriction',
+        message: `Handover request failed. You must request delegation at least 10 hours prior to the ritual start time. This booking starts in ${timeDiffHours.toFixed(1)} hours. ✦`
+      });
+    }
+
+    await dbRun(
+      "UPDATE purohit_bookings SET status = 'Handover_Requested' WHERE id = ?",
+      [bookingId]
+    );
+
+    res.json({ success: true, message: 'Ritual hosted in handover pool! Devotees and local Acharyas will be notified. 🌿' });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
+// 2. Claim Handover Booking
+app.post('/api/purohits/bookings/:bookingId/claim-handover', authenticateToken, requirePurohitRole, async (req, res) => {
+  const { bookingId } = req.params;
+  try {
+    const booking = await dbGet("SELECT * FROM purohit_bookings WHERE id = ?", [bookingId]);
+    if (!booking) {
+      return res.status(404).json({ error: 'Not Found', message: 'Booking not found.' });
+    }
+
+    if (booking.status !== 'Handover_Requested') {
+      return res.status(400).json({ error: 'Bad Request', message: 'This booking is not available for handover claiming.' });
+    }
+
+    if (booking.purohit_id === req.user.id) {
+      return res.status(400).json({ error: 'Bad Request', message: 'You cannot claim a booking you originally hosted.' });
+    }
+
+    const newPurohit = await dbGet("SELECT * FROM purohits WHERE id = ?", [req.user.id]);
+    const oldPurohit = await dbGet("SELECT * FROM purohits WHERE id = ?", [booking.purohit_id]);
+    const devotee = await dbGet("SELECT name, email, phone, communication_preferences FROM users WHERE id = ?", [booking.user_id]);
+
+    if (!newPurohit || !devotee) {
+      return res.status(404).json({ error: 'Not Found', message: 'Related profiles not found.' });
+    }
+
+    // Update assignment to the new Purohit
+    await dbRun(
+      "UPDATE purohit_bookings SET purohit_id = ?, status = 'Confirmed' WHERE id = ?",
+      [req.user.id, bookingId]
+    );
+
+    // Notify Devotee via Email & WhatsApp/SMS
+    const devoteeMsg = `Hari Om ${devotee.name} ji! Your scheduled ${booking.pooja_type} booking on ${booking.booking_date} has been handed over to Acharya ${newPurohit.name} (Phone: ${newPurohit.phone || 'N/A'}) due to scheduling conflicts. All ritual coordinates and details remain identical. 🌿`;
+    
+    const prefs = devotee.communication_preferences ? JSON.parse(devotee.communication_preferences) : { sms: true, whatsapp: true, email: true };
+    if (prefs.whatsapp && devotee.phone) {
+      await sendWhatsAppNotification(devotee.phone, devoteeMsg);
+    }
+    if (prefs.sms && devotee.phone) {
+      await sendSMSNotification(devotee.phone, devoteeMsg);
+    }
+
+    if (prefs.email && devotee.email) {
+      const subject = `✦ Important Update: Acharya Handover Confirmed – Gurupadukam 🌿`;
+      const htmlContent = `
+        <div style="font-family: Arial, sans-serif; padding: 25px; border: 2px solid #C9943A; border-radius: 12px; max-width: 600px; background-color: #FCFBF8; margin: auto;">
+          <h2 style="color: #5C0A20; text-align: center; border-bottom: 2px solid #C9943A; padding-bottom: 12px; margin-top: 0;">gurupadukam.com</h2>
+          <p style="font-size: 15px; color: #1A1A1A; font-weight: bold;">Hari Om, ${devotee.name} ji!</p>
+          <p style="font-size: 13px; color: #333; line-height: 1.55;">
+            Your scheduled booking for <strong>${booking.pooja_type}</strong> has been handed over to a new certified Purohit:
+          </p>
+          
+          <div style="margin: 20px 0; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 15px; font-size: 12px; line-height: 1.6;">
+            <strong>Booking ID:</strong> ${bookingId}<br>
+            <strong>Pooja Type:</strong> ${booking.pooja_type}<br>
+            <strong>Date & Time:</strong> ${booking.booking_date} | ${booking.time_slot}<br>
+            <strong>Original Purohit:</strong> ${oldPurohit ? oldPurohit.name : 'N/A'}<br>
+            <strong style="color: #5C0A20;">New Assigned Purohit:</strong> ${newPurohit.name} (Phone: ${newPurohit.phone || 'N/A'})<br>
+            <strong>Google Meet Link (if online):</strong> ${booking.google_meet_link || 'N/A'}
+          </div>
+          
+          <p style="font-size: 13px; color: #333; line-height: 1.55;">
+            All previous items checklists, Dakshina agreements, and secure deposits remain fully identical.
+          </p>
+          <p style="font-size: 12px; color: #C9943A; font-weight: bold; text-align: center; margin-top: 20px;">✦ Loka Samastha Sukhino Bhavantu ✦</p>
+        </div>
+      `;
+      await sendEmailNotification(devotee.email, subject, htmlContent);
+    }
+
+    res.json({ success: true, message: 'Booking claimed successfully! Coordinates synchronized with your calendar desk. 🌿' });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
+// 3. Get Handover Pool Bookings
+app.get('/api/purohits/handover-pool', authenticateToken, requirePurohitRole, async (req, res) => {
+  try {
+    // List bookings hosted for handover, excluding current priest's own bookings
+    const bookings = await dbQuery(
+      "SELECT b.*, u.name as devotee_name, u.phone as devotee_phone, u.email as devotee_email FROM purohit_bookings b JOIN users u ON b.user_id = u.id WHERE b.status = 'Handover_Requested' AND b.purohit_id != ? ORDER BY b.booking_date ASC",
+      [req.user.id]
+    );
+    res.json(bookings);
   } catch (err) {
     res.status(500).json({ error: 'Internal Error', message: err.message });
   }
@@ -5402,7 +5651,7 @@ app.post('/api/purohits/bookings/:bookingId/send-items', authenticateToken, asyn
     let itemsList = [];
     try {
       const parsedItems = JSON.parse(booking.items || '[]');
-      itemsList = parsedItems.map(item => `• ${item.name} (${item.quantity}x)`);
+      itemsList = parsedItems.map(item => `• ${item.nameTe ? `${item.name} / ${item.nameTe}` : item.name} (${item.quantity}x)`);
     } catch (e) {
       itemsList = ['Checklist parse error'];
     }
