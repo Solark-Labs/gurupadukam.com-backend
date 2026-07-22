@@ -4133,11 +4133,20 @@ app.post('/api/purohits/:id/book', authenticateToken, async (req, res) => {
     }
     const defaultChecklist = getChecklistForRitual(poojaType);
     const mode = ritualMode || 'Offline';
-    const bookingId = 'bk-' + Math.random().toString(36).substr(2, 9);
+    const locPrefix = (loc) => {
+      const l = String(loc || '').toLowerCase();
+      if (l.includes('hyderabad')) return 'HYD';
+      if (l.includes('bengaluru') || l.includes('bangalore')) return 'BLR';
+      if (l.includes('chennai')) return 'CHN';
+      if (l.includes('varanasi')) return 'VAR';
+      if (l.includes('mumbai')) return 'MUM';
+      return 'GEN';
+    };
+    const bookingId = `GPD-${locPrefix(purohit.location)}-${Math.floor(Date.now() / 1000)}`;
     
     await dbRun(
       `INSERT INTO purohit_bookings (id, purohit_id, user_id, pooja_type, booking_date, time_slot, address, status, items, secure_deposit, ritual_mode, google_meet_link)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending_Acharya_Confirmation', ?, 0, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending_with_Purohit', ?, 0, ?, ?)`,
       [bookingId, purohitId, req.user.id, poojaType, bookingDate, timeSlot, address, JSON.stringify(defaultChecklist), mode, null]
     );
 
@@ -4426,6 +4435,151 @@ app.post('/api/bookings/:bookingId/agree-and-pay-advance', authenticateToken, as
     }
 
     res.json({ success: true, message: 'Advance payment successful and booking confirmed!', googleMeetLink: meetLink });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
+// Propose details (Fixed Dakshina, Muhurtham, Samagri list, Venue) - Purohit Action
+app.post('/api/bookings/:id/propose-details', authenticateToken, requirePurohitRole, async (req, res) => {
+  const { id } = req.params;
+  const { fixedPrice, muhurtham, samagriList, venue } = req.body;
+
+  if (!fixedPrice || !muhurtham || !samagriList || !venue) {
+    return res.status(400).json({ error: 'Bad Request', message: 'Fixed price, Muhurtham, Samagri list, and Venue are mandatory fields.' });
+  }
+
+  try {
+    const booking = await dbGet("SELECT * FROM purohit_bookings WHERE id = ?", [id]);
+    if (!booking) {
+      return res.status(404).json({ error: 'Not Found', message: 'Booking not found.' });
+    }
+
+    if (booking.purohit_id !== req.user.id && req.user.role !== 'super_admin') {
+      return res.status(403).json({ error: 'Forbidden', message: 'Unauthorized.' });
+    }
+
+    const price = Number(fixedPrice);
+    let convenienceFee = 49;
+    if (price >= 5000 && price < 10000) {
+      convenienceFee = 99;
+    } else if (price >= 10000) {
+      convenienceFee = 149;
+    }
+
+    await dbRun(
+      `UPDATE purohit_bookings 
+       SET fixed_price = ?, muhurtham = ?, samagri_list = ?, venue = ?, convenience_fee = ?, status = 'Pending_Devotee_Agreement'
+       WHERE id = ?`,
+      [price, muhurtham, typeof samagriList === 'string' ? samagriList : JSON.stringify(samagriList), venue, convenienceFee, id]
+    );
+
+    res.json({ success: true, message: 'Ritual details proposed to devotee.', convenienceFee });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
+// Pay convenience fee to confirm the booking
+app.post('/api/bookings/:id/pay-convenience-fee', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  const { purchaseSamagri } = req.body;
+
+  try {
+    const booking = await dbGet("SELECT * FROM purohit_bookings WHERE id = ?", [id]);
+    if (!booking) {
+      return res.status(404).json({ error: 'Not Found', message: 'Booking not found.' });
+    }
+
+    let childId = null;
+    if (purchaseSamagri) {
+      childId = `${id}-SAMAGRI`;
+      await dbRun(
+        `INSERT INTO orders (id, user_id, customer_name, customer_email, customer_phone, shipping_address, total, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'Processing')`,
+        [childId, req.user.id, req.user.name, req.user.email, '', booking.venue || booking.address, 599]
+      );
+    }
+
+    await dbRun(
+      `UPDATE purohit_bookings 
+       SET convenience_fee_paid = 1, status = 'Confirmed', child_samagri_id = ?
+       WHERE id = ?`,
+      [childId, id]
+    );
+
+    res.json({ success: true, message: 'Convenience fee settled. Booking confirmed!', childSamagriId: childId });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
+// Flag delay by Purohit
+app.post('/api/bookings/:id/flag-delay', authenticateToken, requirePurohitRole, async (req, res) => {
+  const { id } = req.params;
+  const { delayMinutes } = req.body;
+
+  try {
+    await dbRun("UPDATE purohit_bookings SET delay_minutes = ? WHERE id = ?", [Number(delayMinutes || 0), id]);
+    res.json({ success: true, message: `Delay of ${delayMinutes} minutes logged. Devotee notified.` });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
+// Flag emergency handover by Purohit
+app.post('/api/bookings/:id/flag-emergency', authenticateToken, requirePurohitRole, async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const booking = await dbGet("SELECT * FROM purohit_bookings WHERE id = ?", [id]);
+    if (!booking) {
+      return res.status(404).json({ error: 'Not Found', message: 'Booking not found.' });
+    }
+
+    await dbRun("UPDATE purohit_bookings SET emergency_handover = 1, status = 'Emergency_Handover_Active' WHERE id = ?", [id]);
+
+    const alertMsg = `⚠️ EMERGENCY HANDOVER ALERT: Booking ${id} for ${booking.pooja_type} on ${booking.booking_date} has been put in Emergency Handover State. Nearby Acharyas, please claim this booking from the home page desk immediately. 🌿`;
+    
+    const notifId = 'notif-' + Math.random().toString(36).substr(2, 9);
+    await dbRun(
+      `INSERT INTO notifications (id, title, \`desc\`, \`read\`) VALUES (?, ?, ?, 0)`,
+      [notifId, `Emergency Handoff Alert`, alertMsg]
+    );
+
+    res.json({ success: true, message: 'Emergency state activated. Nearby purohits and admins notified.' });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
+// Claim emergency handover by another Purohit
+app.post('/api/bookings/:id/claim-emergency', authenticateToken, requirePurohitRole, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const booking = await dbGet("SELECT * FROM purohit_bookings WHERE id = ?", [id]);
+    if (!booking) {
+      return res.status(404).json({ error: 'Not Found', message: 'Booking not found.' });
+    }
+    await dbRun(
+      "UPDATE purohit_bookings SET purohit_id = ?, emergency_handover = 0, status = 'Confirmed' WHERE id = ?", 
+      [req.user.id, id]
+    );
+    res.json({ success: true, message: 'Sacred slot successfully claimed by you. Devotee notified.' });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Error', message: err.message });
+  }
+});
+
+app.get('/api/bookings/emergency', authenticateToken, async (req, res) => {
+  try {
+    const list = await dbQuery(
+      `SELECT b.*, p.name as original_purohit_name, p.location as location
+       FROM purohit_bookings b
+       JOIN purohits p ON b.purohit_id = p.id
+       WHERE b.emergency_handover = 1`
+    );
+    res.json(list);
   } catch (err) {
     res.status(500).json({ error: 'Internal Error', message: err.message });
   }

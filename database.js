@@ -254,7 +254,10 @@ function initializeDatabaseSQLite() {
       status TEXT DEFAULT 'Confirmed',
       items TEXT,
       items_purchased INTEGER DEFAULT 0,
-      secure_deposit REAL DEFAULT 0
+      secure_deposit REAL DEFAULT 0,
+      fixed_price REAL DEFAULT NULL,
+      advance_amount REAL DEFAULT NULL,
+      advance_paid INTEGER DEFAULT 0
     )`);
 
     db.run(`CREATE TABLE IF NOT EXISTS purohit_posts (
@@ -420,6 +423,9 @@ function initializeDatabaseSQLite() {
     db.run(`ALTER TABLE purohit_bookings ADD COLUMN secure_deposit REAL DEFAULT 0`, (err) => {});
     db.run(`ALTER TABLE purohit_bookings ADD COLUMN ritual_mode TEXT DEFAULT 'Offline'`, (err) => {});
     db.run(`ALTER TABLE purohit_bookings ADD COLUMN google_meet_link TEXT`, (err) => {});
+    db.run(`ALTER TABLE purohit_bookings ADD COLUMN fixed_price REAL DEFAULT NULL`, (err) => {});
+    db.run(`ALTER TABLE purohit_bookings ADD COLUMN advance_amount REAL DEFAULT NULL`, (err) => {});
+    db.run(`ALTER TABLE purohit_bookings ADD COLUMN advance_paid INTEGER DEFAULT 0`, (err) => {});
     db.run(`ALTER TABLE queries ADD COLUMN is_private INTEGER DEFAULT 0`, (err) => {});
     db.run(`ALTER TABLE queries ADD COLUMN is_deleted INTEGER DEFAULT 0`, (err) => {});
     db.run(`ALTER TABLE queries ADD COLUMN deleted_by TEXT`, (err) => {});
@@ -454,6 +460,15 @@ function initializeDatabaseSQLite() {
     db.run(`ALTER TABLE purohits ADD COLUMN teaching_interest INTEGER DEFAULT 0`, (err) => {});
     db.run(`ALTER TABLE purohits ADD COLUMN teaching_specialization TEXT`, (err) => {});
     db.run(`ALTER TABLE purohits ADD COLUMN instructor_bio TEXT`, (err) => {});
+    db.run(`ALTER TABLE purohit_bookings ADD COLUMN muhurtham TEXT`, (err) => {});
+    db.run(`ALTER TABLE purohit_bookings ADD COLUMN convenience_fee REAL`, (err) => {});
+    db.run(`ALTER TABLE purohit_bookings ADD COLUMN convenience_fee_paid INTEGER DEFAULT 0`, (err) => {});
+    db.run(`ALTER TABLE purohit_bookings ADD COLUMN samagri_list TEXT`, (err) => {});
+    db.run(`ALTER TABLE purohit_bookings ADD COLUMN venue TEXT`, (err) => {});
+    db.run(`ALTER TABLE purohit_bookings ADD COLUMN child_samagri_id TEXT`, (err) => {});
+    db.run(`ALTER TABLE purohit_bookings ADD COLUMN parent_booking_id TEXT`, (err) => {});
+    db.run(`ALTER TABLE purohit_bookings ADD COLUMN delay_minutes INTEGER DEFAULT 0`, (err) => {});
+    db.run(`ALTER TABLE purohit_bookings ADD COLUMN emergency_handover INTEGER DEFAULT 0`, (err) => {});
 
     // SQLite Index creations for High-Concurrence Scalability
     db.run(`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`);
@@ -768,6 +783,16 @@ async function initializeDatabaseMySQL() {
     try {
       await mysqlPool.query(`ALTER TABLE users ADD COLUMN communication_preferences TEXT`);
     } catch (e) {}
+
+    try { await mysqlPool.query(`ALTER TABLE purohit_bookings ADD COLUMN muhurtham VARCHAR(255)`); } catch (e) {}
+    try { await mysqlPool.query(`ALTER TABLE purohit_bookings ADD COLUMN convenience_fee DOUBLE`); } catch (e) {}
+    try { await mysqlPool.query(`ALTER TABLE purohit_bookings ADD COLUMN convenience_fee_paid INT DEFAULT 0`); } catch (e) {}
+    try { await mysqlPool.query(`ALTER TABLE purohit_bookings ADD COLUMN samagri_list TEXT`); } catch (e) {}
+    try { await mysqlPool.query(`ALTER TABLE purohit_bookings ADD COLUMN venue TEXT`); } catch (e) {}
+    try { await mysqlPool.query(`ALTER TABLE purohit_bookings ADD COLUMN child_samagri_id VARCHAR(255)`); } catch (e) {}
+    try { await mysqlPool.query(`ALTER TABLE purohit_bookings ADD COLUMN parent_booking_id VARCHAR(255)`); } catch (e) {}
+    try { await mysqlPool.query(`ALTER TABLE purohit_bookings ADD COLUMN delay_minutes INT DEFAULT 0`); } catch (e) {}
+    try { await mysqlPool.query(`ALTER TABLE purohit_bookings ADD COLUMN emergency_handover INT DEFAULT 0`); } catch (e) {}
 
     try { await mysqlPool.query(`ALTER TABLE purohits ADD COLUMN bio TEXT`); } catch (e) {}
     try { await mysqlPool.query(`ALTER TABLE purohits ADD COLUMN credentials TEXT`); } catch (e) {}
