@@ -6359,15 +6359,16 @@ function calculateVedicCompatibility(searcher, match) {
   };
 }
 
-await dbInitPromise;
 let server = null;
-if (!process.env.VERCEL) {
-  server = app.listen(PORT, API_BACKEND_HOST, () => {
-    console.log(`Guru Padukam Production Backend listening at http://localhost:${PORT}`);
-  });
-} else {
-  console.log('✦ Backend running as serverless function on Vercel.');
-}
+dbInitPromise.then(() => {
+  if (!process.env.VERCEL && !server) {
+    server = app.listen(PORT, API_BACKEND_HOST, () => {
+      console.log(`Guru Padukam Production Backend listening at http://localhost:${PORT}`);
+    });
+  } else if (process.env.VERCEL) {
+    console.log('✦ Backend running as serverless function on Vercel.');
+  }
+});
 
 const wss = new WebSocketServer({ noServer: true });
 
@@ -6475,6 +6476,8 @@ if (server) {
     socket.destroy();
   }
 });
+}
+
 // Global Express Error Handler to prevent Vercel 500 server crashes
 app.use((err, req, res, next) => {
   console.error('[Global Backend Error]:', err);
