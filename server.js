@@ -6475,6 +6475,10 @@ if (server) {
     socket.destroy();
   }
 });
-}
+// Global Express Error Handler to prevent Vercel 500 server crashes
+app.use((err, req, res, next) => {
+  console.error('[Global Backend Error]:', err);
+  res.status(500).json({ error: 'Internal Error', message: err.message || 'An unexpected backend error occurred.' });
+});
 
 export default app;

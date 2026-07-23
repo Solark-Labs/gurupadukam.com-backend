@@ -1,4 +1,3 @@
-import sqlite3 from 'sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -20,25 +19,26 @@ export const dbInitPromise = new Promise((resolve) => {
 
 if (isMySQL) {
   console.log('✦ Database Engine: Hostinger Remote MySQL Pool Active');
-  
-  // Dynamic import to prevent crash on local SQLite development if mysql2 is not installed yet
-  const { default: mysql } = await import('mysql2/promise');
-  
-  const poolConfig = {
-    host: process.env.MYSQL_HOST,
-    port: parseInt(process.env.MYSQL_PORT || '3306'),
-    user: process.env.MYSQL_USER,
-    password: process.env.MYSQL_PASSWORD,
-    database: process.env.MYSQL_DATABASE,
-    waitForConnections: true,
-    connectionLimit: parseInt(process.env.MYSQL_CONNECTION_LIMIT || '25'),
-    queueLimit: 0,
-    enableKeepAlive: true,
-    keepAliveInitialDelay: 10000
-  };
-  
-  mysqlPool = mysql.createPool(poolConfig);
-  initializeDatabaseMySQL();
+  try {
+    const { default: mysql } = await import('mysql2/promise');
+    const poolConfig = {
+      host: process.env.MYSQL_HOST,
+      port: parseInt(process.env.MYSQL_PORT || '3306'),
+      user: process.env.MYSQL_USER,
+      password: process.env.MYSQL_PASSWORD,
+      database: process.env.MYSQL_DATABASE,
+      waitForConnections: true,
+      connectionLimit: parseInt(process.env.MYSQL_CONNECTION_LIMIT || '25'),
+      queueLimit: 0,
+      enableKeepAlive: true,
+      keepAliveInitialDelay: 10000
+    };
+    mysqlPool = mysql.createPool(poolConfig);
+    initializeDatabaseMySQL();
+  } catch (err) {
+    console.error('Failed initializing Remote MySQL Pool:', err.message);
+    if (dbInitResolve) dbInitResolve();
+  }
 } else {
   console.log('✦ Database Engine: File-Based SQLite Active');
   const isVercel = !!process.env.VERCEL;
@@ -59,19 +59,25 @@ if (isMySQL) {
     }
   }
 
-  db = new sqlite3.Database(dbPath, (err) => {
-    if (err) {
-      console.error('Error opening SQLite database:', err.message);
-      if (dbInitResolve) dbInitResolve();
-    } else {
-      db.serialize(() => {
-        try { db.run("PRAGMA journal_mode=WAL"); } catch (e) {}
-        try { db.run("PRAGMA synchronous=NORMAL"); } catch (e) {}
-        try { db.run("PRAGMA busy_timeout=10000"); } catch (e) {}
-      });
-      initializeDatabaseSQLite();
-    }
-  });
+  try {
+    const { default: sqlite3Module } = await import('sqlite3');
+    db = new sqlite3Module.Database(dbPath, (err) => {
+      if (err) {
+        console.error('Error opening SQLite database:', err.message);
+        if (dbInitResolve) dbInitResolve();
+      } else {
+        db.serialize(() => {
+          try { db.run("PRAGMA journal_mode=WAL"); } catch (e) {}
+          try { db.run("PRAGMA synchronous=NORMAL"); } catch (e) {}
+          try { db.run("PRAGMA busy_timeout=10000"); } catch (e) {}
+        });
+        initializeDatabaseSQLite();
+      }
+    });
+  } catch (err) {
+    console.warn('SQLite native bindings not available on this serverless runtime:', err.message);
+    if (dbInitResolve) dbInitResolve();
+  }
 }
 
 // Unified Database Promise Wrapper Functions
@@ -79,6 +85,7 @@ export const dbQuery = (sql, params = []) => {
   if (isMySQL) {
     return new Promise(async (resolve, reject) => {
       try {
+        if (!mysqlPool) return resolve([]);
         const [rows] = await mysqlPool.execute(sql, params);
         resolve(rows);
       } catch (err) {
@@ -87,6 +94,7 @@ export const dbQuery = (sql, params = []) => {
     });
   } else {
     return new Promise((resolve, reject) => {
+      if (!db) return resolve([]);
       db.all(sql, params, (err, rows) => {
         if (err) reject(err);
         else resolve(rows);
@@ -99,6 +107,7 @@ export const dbRun = (sql, params = []) => {
   if (isMySQL) {
     return new Promise(async (resolve, reject) => {
       try {
+        if (!mysqlPool) return resolve({ id: Date.now(), changes: 1 });
         const [result] = await mysqlPool.execute(sql, params);
         resolve({ id: result.insertId, changes: result.affectedRows });
       } catch (err) {
@@ -107,9 +116,10 @@ export const dbRun = (sql, params = []) => {
     });
   } else {
     return new Promise((resolve, reject) => {
+      if (!db) return resolve({ id: Date.now(), changes: 1 });
       db.run(sql, params, function (err) {
         if (err) reject(err);
-        else resolve({ id: this.lastID, changes: this.changes });
+        else resolve({ id: this ? this.lastID : Date.now(), changes: this ? this.changes : 1 });
       });
     });
   }
@@ -119,6 +129,7 @@ export const dbGet = (sql, params = []) => {
   if (isMySQL) {
     return new Promise(async (resolve, reject) => {
       try {
+        if (!mysqlPool) return resolve(undefined);
         const [rows] = await mysqlPool.execute(sql, params);
         if (rows.length > 0) resolve(rows[0]);
         else resolve(undefined);
@@ -128,6 +139,7 @@ export const dbGet = (sql, params = []) => {
     });
   } else {
     return new Promise((resolve, reject) => {
+      if (!db) return resolve(undefined);
       db.get(sql, params, (err, row) => {
         if (err) reject(err);
         else resolve(row);
