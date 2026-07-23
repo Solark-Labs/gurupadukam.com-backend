@@ -33,7 +33,13 @@ const requirePurohitRole = requireRole(['purohit', 'super_admin']);
 const requireAdminOrSuperOrPurohit = requireRole(['admin', 'super_admin', 'purohit']);
 import { createRazorpayOrder, verifyRazorpaySignature, getRazorpayKey } from './razorpay.js';
 import { createShiprocketShipment, getShiprocketTracking } from './shiprocket.js';
-import { getChecklistForRitual } from './rituals_checklists.js';
+let getChecklistForRitual = () => ({ items: [] });
+try {
+  const ritualsMod = await import('./rituals_checklists.js');
+  getChecklistForRitual = ritualsMod.getChecklistForRitual || getChecklistForRitual;
+} catch (e) {
+  console.warn('rituals_checklists module not bundled, using fallback.');
+}
 
 const app = express();
 app.use(compression());
