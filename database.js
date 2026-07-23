@@ -1,5 +1,6 @@
 import sqlite3 from 'sqlite3';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import bcrypt from 'bcryptjs';
 
@@ -39,16 +40,34 @@ if (isMySQL) {
   mysqlPool = mysql.createPool(poolConfig);
   initializeDatabaseMySQL();
 } else {
-  console.log('✦ Database Engine: Local File-Based SQLite Active');
-  const dbPath = process.env.DATABASE_URL || process.env.DB_PATH || path.join(__dirname, 'gurupadukam.db');
+  console.log('✦ Database Engine: File-Based SQLite Active');
+  const isVercel = !!process.env.VERCEL;
+  let dbPath = process.env.DATABASE_URL || process.env.DB_PATH || path.join(__dirname, 'gurupadukam.db');
+  
+  if (isVercel) {
+    dbPath = '/tmp/gurupadukam.db';
+    try {
+      if (!fs.existsSync(dbPath)) {
+        const srcDb = path.join(__dirname, 'gurupadukam.db');
+        if (fs.existsSync(srcDb)) {
+          fs.copyFileSync(srcDb, dbPath);
+          console.log('Copied database template to /tmp/gurupadukam.db');
+        }
+      }
+    } catch (e) {
+      console.error('Failed copying database template to /tmp:', e.message);
+    }
+  }
+
   db = new sqlite3.Database(dbPath, (err) => {
     if (err) {
       console.error('Error opening SQLite database:', err.message);
+      if (dbInitResolve) dbInitResolve();
     } else {
       db.serialize(() => {
-        db.run("PRAGMA journal_mode=WAL");
-        db.run("PRAGMA synchronous=NORMAL");
-        db.run("PRAGMA busy_timeout=10000");
+        try { db.run("PRAGMA journal_mode=WAL"); } catch (e) {}
+        try { db.run("PRAGMA synchronous=NORMAL"); } catch (e) {}
+        try { db.run("PRAGMA busy_timeout=10000"); } catch (e) {}
       });
       initializeDatabaseSQLite();
     }
